@@ -12,17 +12,7 @@ multi-ecosystem-groups:
       interval: "weekly"
       day: "tuesday"
       time: "03:50"
-  src-agent:
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:50"
   src-cart:
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:50"
-  src-chatbot:
     schedule:
       interval: "weekly"
       day: "tuesday"
@@ -57,11 +47,6 @@ multi-ecosystem-groups:
       interval: "weekly"
       day: "tuesday"
       time: "03:50"
-  src-mcp:
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:50"
   src-payment:
     schedule:
       interval: "weekly"
@@ -78,11 +63,6 @@ multi-ecosystem-groups:
       day: "tuesday"
       time: "03:50"
   src-recommendation:
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "03:50"
-  src-react-native-app:
     schedule:
       interval: "weekly"
       day: "tuesday"
@@ -287,42 +267,6 @@ updates:
       time: "03:50"
   - package-ecosystem: "pip"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
     directories:
-      - "/src/agent/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-agent"
-  - package-ecosystem: "docker"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
-      - "/src/agent/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-agent"
-  - package-ecosystem: "pip"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
-      - "/src/mcp/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-mcp"
-  - package-ecosystem: "docker"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
-      - "/src/mcp/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-mcp"
-  - package-ecosystem: "pip"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
-      - "/src/chatbot/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-chatbot"
-  - package-ecosystem: "docker"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
-      - "/src/chatbot/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-chatbot"
-  - package-ecosystem: "pip"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
       - "/src/load-generator/**"
     patterns:
       - "*"
@@ -394,26 +338,6 @@ updates:
     patterns:
       - "*"
     multi-ecosystem-group: "src-recommendation"
-  - package-ecosystem: "npm"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
-      - "/src/react-native-app/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-react-native-app"
-  - package-ecosystem: "bundler"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
-      - "/src/react-native-app/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-react-native-app"
-    allow:
-      - dependency-type: "all"
-  - package-ecosystem: "docker"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
-    directories:
-      - "/src/react-native-app/**"
-    patterns:
-      - "*"
-    multi-ecosystem-group: "src-react-native-app"
   - package-ecosystem: "cargo"  # zizmor: ignore[dependabot-cooldown] cooldown prevents multi-ecosystem batching
     directories:
       - "/src/shipping/**"

@@ -13,26 +13,8 @@ ADDLICENSE_BINARY=bin/addlicense
 ADDLICENSE = $(TOOLS_DIR)/$(ADDLICENSE_BINARY)
 
 DOCKER_CMD ?= docker
-DOCKER_COMPOSE_CMD ?= docker compose
-DOCKER_COMPOSE_ENV=--env-file .env --env-file .env.override
 
-# Compose file layers — combine with -f flags for the desired configuration:
-#   Core (minimal):             compose.yaml
-#   Full (adds Kafka group):    compose.yaml + compose.full.yaml
-#   With observability stack:   + compose.observability.yaml
-#   With extras customizations: + compose.extras.yaml (always last)
-DOCKER_COMPOSE_FILES_CORE=-f compose.yaml
-DOCKER_COMPOSE_FILES_FULL=$(DOCKER_COMPOSE_FILES_CORE) -f compose.full.yaml
-DOCKER_COMPOSE_FILES_OBSERVABILITY=-f compose.observability.yaml
-DOCKER_COMPOSE_FILES_PROFILING=-f compose.profiling.yaml
-DOCKER_COMPOSE_FILES_EXTRAS=-f compose.extras.yaml
-DOCKER_COMPOSE_FILES_TESTS=-f compose.tests.yaml
-DOCKER_COMPOSE_FILES_AGENT=-f compose.agent.yaml
-
-# Default: full demo + observability stack + extras stub
-DOCKER_COMPOSE_FILES=$(DOCKER_COMPOSE_FILES_FULL) $(DOCKER_COMPOSE_FILES_OBSERVABILITY) $(DOCKER_COMPOSE_FILES_EXTRAS)
-
-# Accept either `service=` or `SERVICE=` for single-service targets (build, restart, redeploy).
+# Accept either `service=` or `SERVICE=` for single-service targets.
 # Must be evaluated at file scope; an `ifdef SERVICE` block inside a recipe is a shell command,
 # not a Make conditional, so the alias never takes effect there.
 ifdef SERVICE
@@ -44,15 +26,6 @@ endif
 # Keep links in semantic_conventions/README.md and .vscode/settings.json in sync!
 SEMCONVGEN_VERSION=0.11.0
 YAMLLINT_VERSION=1.30.0
-
-# Changelog fragment tooling (chloggen). Pinned to match the OpenTelemetry
-# Collector. Invoked from the repo root, which has no go.mod, so `go run` runs
-# the pinned tool without touching any local Go module.
-CHLOGGEN_VERSION=0.30.0
-CHLOGGEN_CONFIG=.chloggen/config.yaml
-CHLOGGEN=go run go.opentelemetry.io/build-tools/chloggen@v$(CHLOGGEN_VERSION)
-# Default changelog fragment filename is derived from the current branch name.
-FILENAME?=$(shell git branch --show-current | sed 's/[^a-zA-Z0-9]/_/g')
 
 .PHONY: all
 all: install-tools markdownlint misspell yamllint
@@ -96,7 +69,6 @@ checklicense:	$(ADDLICENSE)
 		-ignore node_modules/** \
 		-ignore .expo/** \
 		-ignore Pods/** \
-		-ignore ".chloggen/**" \
 		-ignore **/extras/** \
 		-ignore **/vendor/** \
 		-ignore **/.venv/** \
@@ -115,7 +87,6 @@ addlicense:	$(ADDLICENSE)
 		-ignore node_modules/** \
 		-ignore .expo/** \
 		-ignore Pods/** \
-		-ignore ".chloggen/**" \
 		-ignore **/extras/** \
 		-ignore **/vendor/** \
 		-ignore **/.venv/** \
@@ -134,7 +105,7 @@ checklinks:
 
 # Run all checks in order of speed / likely failure.
 .PHONY: check
-check: misspell markdownlint checklicense checklinks chlog-validate
+check: misspell markdownlint checklicense checklinks
 	@echo "All checks complete"
 
 # Attempt to fix issues / regenerate tables.
@@ -142,157 +113,18 @@ check: misspell markdownlint checklicense checklinks chlog-validate
 fix: misspell-correction
 	@echo "All autofixes complete"
 
-# Changelog fragments (chloggen). See CONTRIBUTING.md for the workflow.
-# Create a new fragment for the current branch (edit the generated file after):
-#   make chlog-new
-.PHONY: chlog-new
-chlog-new:
-	$(CHLOGGEN) new --config $(CHLOGGEN_CONFIG) --filename $(FILENAME)
-
-# Validate that every fragment in .chloggen/ is well-formed. Run in CI.
-.PHONY: chlog-validate
-chlog-validate:
-	$(CHLOGGEN) validate --config $(CHLOGGEN_CONFIG)
-
-# Preview the CHANGELOG.md that the current fragments would produce.
-.PHONY: chlog-preview
-chlog-preview:
-	$(CHLOGGEN) update --config $(CHLOGGEN_CONFIG) --dry
-
-# Fold all fragments into CHANGELOG.md under the given version and delete them.
-# Run during the release process:
-#   make chlog-update VERSION=1.13.0
-.PHONY: chlog-update
-chlog-update:
-	$(CHLOGGEN) update --config $(CHLOGGEN_CONFIG) --version $(VERSION)
-
 .PHONY: install-tools
 install-tools: $(MISSPELL) $(ADDLICENSE)
 	npm install
 	@echo "All tools installed"
 
-# Use to build all services, or a single service component
-# Example: make build service=frontend
-.PHONY: build
-build:
-ifneq ($(strip $(service)),)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) build $(service)
-else
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) build
-endif
-
-# Build all services including the agentic layer (agent, mcp, chatbot).
-# Used by the agentic CI workflow so those images are present when
-# make run-telemetry-tests-agentic loads them from the artifact.
-.PHONY: build-agentic
-build-agentic:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) $(DOCKER_COMPOSE_FILES_AGENT) build
-
-.PHONY: build-and-push
-build-and-push:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) build --push
-
-# Create multiplatform builder for buildx
-.PHONY: create-multiplatform-builder
-create-multiplatform-builder:
-	docker buildx create --name otel-demo-builder --bootstrap --use --driver docker-container --config ./buildkitd.toml
-
-# Remove multiplatform builder for buildx
-.PHONY: remove-multiplatform-builder
-remove-multiplatform-builder:
-	docker buildx rm otel-demo-builder
-
-# Build and push multiplatform images (linux/amd64, linux/arm64) using buildx.
-# Requires docker with buildx enabled and a multi-platform capable builder in use.
-# Docker needs to be configured to use containerd storage for images to be loaded into the local registry.
-.PHONY: build-multiplatform
-build-multiplatform:
-	# Because buildx bake does not support --env-file yet, we need to load it into the environment first.
-	set -a; . ./.env.override; set +a && docker buildx bake $(DOCKER_COMPOSE_FILES) --load --set "*.platform=linux/amd64,linux/arm64"
-
-.PHONY: build-multiplatform-and-push
-build-multiplatform-and-push:
-	# Because buildx bake does not support --env-file yet, we need to load it into the environment first.
-	set -a; . ./.env.override; set +a && docker buildx bake $(DOCKER_COMPOSE_FILES) --push --set "*.platform=linux/amd64,linux/arm64"
-
-.PHONY: clean-images
-clean-images:
-	$(DOCKER_CMD) rmi $(shell $(DOCKER_CMD) images --filter=reference="ghcr.io/open-telemetry/demo:latest-*" -q); \
-    if [ $$? -ne 0 ]; \
-    then \
-    	echo; \
-        echo "Failed to removed 1 or more OpenTelemetry Demo images."; \
-        echo "Check to ensure the Demo is not running by executing: make stop"; \
-        false; \
-    fi
-
-.PHONY: run-frontend-tests
-run-frontend-tests:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) $(DOCKER_COMPOSE_FILES_TESTS) run frontendTests
-
-.PHONY: run-telemetry-tests
-run-telemetry-tests: start
-	$(DOCKER_CMD) build -t opentelemetry-demo-telemetry-tests ./test/telemetry
-	@touch .env.override
-	@# Capture test exit code, always tear down the demo, then propagate the code.
-	@set +e; \
-	$(DOCKER_CMD) run --rm --network opentelemetry-demo \
-		--env-file .env --env-file .env.override \
-		-e TEST_SCOPE=full \
-		-e WARMUP_SECONDS=$${WARMUP_SECONDS:-240} \
-		-e POLL_TIMEOUT=$${POLL_TIMEOUT:-180} \
-		-e WARMUP_PROBE_ENABLED=$${WARMUP_PROBE_ENABLED:-true} \
-		-e WARMUP_PROBE_CHECKOUTS=$${WARMUP_PROBE_CHECKOUTS:-5} \
-		-e WARMUP_PROBE_TIMEOUT=$${WARMUP_PROBE_TIMEOUT:-120} \
-		opentelemetry-demo-telemetry-tests; \
-	rc=$$?; \
-	$(MAKE) stop; \
-	exit $$rc
-
-.PHONY: run-telemetry-tests-minimal
-run-telemetry-tests-minimal: start-minimal
-	$(DOCKER_CMD) build -t opentelemetry-demo-telemetry-tests ./test/telemetry
-	@touch .env.override
-	@set +e; \
-	$(DOCKER_CMD) run --rm --network opentelemetry-demo \
-		--env-file .env --env-file .env.override \
-		-e TEST_SCOPE=minimal \
-		-e WARMUP_SECONDS=$${WARMUP_SECONDS:-240} \
-		-e POLL_TIMEOUT=$${POLL_TIMEOUT:-180} \
-		-e WARMUP_PROBE_ENABLED=$${WARMUP_PROBE_ENABLED:-true} \
-		-e WARMUP_PROBE_CHECKOUTS=$${WARMUP_PROBE_CHECKOUTS:-5} \
-		-e WARMUP_PROBE_TIMEOUT=$${WARMUP_PROBE_TIMEOUT:-120} \
-		opentelemetry-demo-telemetry-tests; \
-	rc=$$?; \
-	$(MAKE) stop; \
-	exit $$rc
-
-.PHONY: run-telemetry-tests-agentic
-run-telemetry-tests-agentic:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) $(DOCKER_COMPOSE_FILES_AGENT) up --force-recreate --remove-orphans --detach
-	$(DOCKER_CMD) build -t opentelemetry-demo-telemetry-tests ./test/telemetry
-	@touch .env.override
-	@set +e; \
-	$(DOCKER_CMD) run --rm --network opentelemetry-demo \
-		--env-file .env --env-file .env.override \
-		-e TEST_SCOPE=agentic \
-		-e WARMUP_SECONDS=$${WARMUP_SECONDS:-240} \
-		-e POLL_TIMEOUT=$${POLL_TIMEOUT:-180} \
-		-e WARMUP_PROBE_ENABLED=false \
-		-e WARMUP_PROBE_CHECKOUTS=0 \
-		-e WARMUP_PROBE_TIMEOUT=$${WARMUP_PROBE_TIMEOUT:-120} \
-		opentelemetry-demo-telemetry-tests; \
-	rc=$$?; \
-	$(MAKE) stop; \
-	exit $$rc
-
 .PHONY: generate-protobuf
 generate-protobuf:
-	./ide-gen-proto.sh
+	./scripts/ide-gen-proto.sh
 
 .PHONY: docker-generate-protobuf
 docker-generate-protobuf:
-	./docker-gen-proto.sh
+	./scripts/docker-gen-proto.sh
 
 .PHONY: clean
 clean:
@@ -310,111 +142,6 @@ check-clean-work-tree:
 	  exit 1; \
 	fi
 
-.PHONY: start
-start:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) up --force-recreate --remove-orphans --detach
-	@echo ""
-	@echo "OpenTelemetry Demo is running."
-	@echo "Go to http://localhost:8080 for the demo UI."
-	@echo "Go to http://localhost:8080/jaeger/ui for the Jaeger UI."
-	@echo "Go to http://localhost:8080/grafana/ for the Grafana UI."
-	@echo "Go to http://localhost:8080/loadgen/ for the Load Generator UI."
-	@echo "Go to http://localhost:8080/feature/ to change feature flags."
-	@echo "Go to http://localhost:8080/telemetry/ for the Weaver generated telemetry documentation."
-
-.PHONY: start-minimal
-start-minimal:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES_CORE) $(DOCKER_COMPOSE_FILES_OBSERVABILITY) $(DOCKER_COMPOSE_FILES_EXTRAS) up --force-recreate --remove-orphans --detach
-	@echo ""
-	@echo "OpenTelemetry Demo in minimal mode is running."
-	@echo "Go to http://localhost:8080 for the demo UI."
-	@echo "Go to http://localhost:8080/jaeger/ui for the Jaeger UI."
-	@echo "Go to http://localhost:8080/grafana/ for the Grafana UI."
-	@echo "Go to http://localhost:8080/loadgen/ for the Load Generator UI."
-	@echo "Go to http://localhost:8080/feature/ to change feature flags."
-	@echo "Go to http://localhost:8080/telemetry/ for the Weaver generated telemetry documentation."
-
-.PHONY: start-no-o11y
-start-no-o11y:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES_FULL) $(DOCKER_COMPOSE_FILES_EXTRAS) up --force-recreate --remove-orphans --detach
-	@echo ""
-	@echo "OpenTelemetry Demo is running (no observability stack)."
-	@echo "Go to http://localhost:8080 for the demo UI."
-	@echo "Go to http://localhost:8080/loadgen/ for the Load Generator UI."
-	@echo "Go to http://localhost:8080/feature/ to change feature flags."
-	@echo "Go to http://localhost:8080/telemetry/ for the Weaver generated telemetry documentation."
-
-.PHONY: start-minimal-no-o11y
-start-minimal-no-o11y:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES_CORE) $(DOCKER_COMPOSE_FILES_EXTRAS) up --force-recreate --remove-orphans --detach
-	@echo ""
-	@echo "OpenTelemetry Demo in minimal mode is running (no observability stack)."
-	@echo "Go to http://localhost:8080 for the demo UI."
-	@echo "Go to http://localhost:8080/loadgen/ for the Load Generator UI."
-	@echo "Go to http://localhost:8080/feature/ to change feature flags."
-	@echo "Go to http://localhost:8080/telemetry/ for the Weaver generated telemetry documentation."
-
-.PHONY: start-profiling
-start-profiling:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES_FULL) $(DOCKER_COMPOSE_FILES_OBSERVABILITY) $(DOCKER_COMPOSE_FILES_PROFILING) $(DOCKER_COMPOSE_FILES_EXTRAS) up --force-recreate --remove-orphans --detach
-	@echo ""
-	@echo "OpenTelemetry Demo in profiling mode is running."
-	@echo "Go to http://localhost:8080 for the demo UI."
-	@echo "Go to http://localhost:8080/jaeger/ui for the Jaeger UI."
-	@echo "Go to http://localhost:8080/grafana/ for the Grafana UI."
-	@echo "Go to http://localhost:8080/loadgen/ for the Load Generator UI."
-	@echo "Go to http://localhost:8080/profiles/ for the Firepit UI."
-	@echo "Go to http://localhost:8080/telemetry/ for the Weaver generated telemetry documentation."
-
-.PHONY: start-agentic
-start-agentic:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) $(DOCKER_COMPOSE_FILES_AGENT) up --force-recreate --remove-orphans --detach
-	@echo ""
-	@echo "OpenTelemetry Demo with the agent, mcp and chatbot is running."
-	@echo "Go to http://localhost:8080 for the demo UI."
-	@echo "Go to http://localhost:8080/jaeger/ui for the Jaeger UI."
-	@echo "Go to http://localhost:8080/grafana/ for the Grafana UI."
-	@echo "Go to http://localhost:8080/loadgen/ for the Load Generator UI."
-	@echo "Go to http://localhost:8080/feature/ to change feature flags."
-	@echo "Go to http://localhost:8080/telemetry/ for the Weaver generated telemetry documentation."
-	@echo "Go to http://localhost:8080/chatbot/ for interacting with demo application using an agent."
-
-.PHONY: stop
-stop:
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) down --remove-orphans --volumes
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) $(DOCKER_COMPOSE_FILES_AGENT) down --remove-orphans --volumes
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) $(DOCKER_COMPOSE_FILES_PROFILING) down --remove-orphans --volumes
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) $(DOCKER_COMPOSE_FILES_TESTS) down --remove-orphans --volumes
-	@echo ""
-	@echo "OpenTelemetry Demo is stopped."
-
-# Use to restart a single service component
-# Example: make restart service=frontend
-.PHONY: restart
-restart:
-ifneq ($(strip $(service)),)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) stop $(service)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) rm --force $(service)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) create $(service)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) start $(service)
-else
-	@echo "Please provide a service name using 'service=<name>' or 'SERVICE=<name>'"
-endif
-
-# Use to rebuild and restart (redeploy) a single service component
-# Example: make redeploy service=frontend
-.PHONY: redeploy
-redeploy:
-ifneq ($(strip $(service)),)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) build $(service)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) stop $(service)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) rm --force $(service)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) create $(service)
-	$(DOCKER_COMPOSE_CMD) $(DOCKER_COMPOSE_ENV) $(DOCKER_COMPOSE_FILES) start $(service)
-else
-	@echo "Please provide a service name using 'service=<name>' or 'SERVICE=<name>'"
-endif
-
-.PHONY: build-react-native-android
-build-react-native-android:
-	$(DOCKER_CMD) build -f src/react-native-app/android.Dockerfile --platform=linux/amd64 --output=. src/react-native-app
+# Orchestration targets (build, start, stop, redeploy, tests) run entirely on
+# Kubernetes now — see PLAN.md for the Helm/kind setup that replaces the old
+# docker-compose targets. They land here once that work is implemented.

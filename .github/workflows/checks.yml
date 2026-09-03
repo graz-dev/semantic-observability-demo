@@ -19,21 +19,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build_images:
-    name: Build images
-    permissions:  # required by the reusable workflow
-      contents: read  # required by the component-build-images reusable workflow
-      packages: write  # required to push built images to GHCR
-    uses: ./.github/workflows/component-build-images.yml
-    with:
-      push: ${{ github.event_name == 'push' }}
-      force_build: ${{ github.event_name == 'push' }}
-      # Use a non-release tag for PR builds; tags are not pushed when push=false.
-      version: ${{ github.event_name == 'push' && 'main' || 'dev' }}
-    secrets:
-      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-
   markdownlint:
     name: Markdown lint
     runs-on: ubuntu-latest
@@ -125,24 +110,6 @@ jobs:
       - name: Run checklicense
         run: make checklicense
 
-  # Validates that every fragment in .chloggen/ is well-formed. This does not
-  # require a fragment to be present on a PR; the `Skip Changelog` label is
-  # documented as the convention for when/if presence enforcement is enabled.
-  changelog:
-    name: Changelog
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
-        with:
-          go-version: '1.25.10'
-      - name: Validate changelog fragments
-        run: make chlog-validate
-
   weaver-check:
     name: Weaver check
     runs-on: ubuntu-latest
@@ -163,54 +130,16 @@ jobs:
             "${WEAVER_IMAGE}" \
             registry check -r source
 
-  check-react-native-changes:
-    name: Check React Native changes
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.filter.outputs.react_native }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Check React Native paths
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
-        id: filter
-        with:
-          filters: |
-            react_native:
-              - 'src/react-native-app/**'
-              - 'Makefile'
-              - '.github/workflows/checks.yml'
-              - '.github/workflows/react-native-build.yml'
-
-  react-native-build:
-    needs: check-react-native-changes
-    if: needs.check-react-native-changes.outputs.should_build == 'true'
-    uses: ./.github/workflows/react-native-build.yml
-
-  codeql-analysis:
-    name: CodeQL analysis
-    permissions:
-      actions: read  # required to scan GitHub Actions workflows
-      contents: read  # required to checkout the repository
-      security-events: write  # required to upload CodeQL SARIF to code scanning
-    uses: ./.github/workflows/codeql-analysis.yml
-
   build-test:
     name: build-test
     needs: [
-      build_images,
       markdownlint,
       yamllint,
       misspell,
       checklinks,
       sanity,
       checklicense,
-      changelog,
-      weaver-check,
-      react-native-build,
-      codeql-analysis
+      weaver-check
     ]
     if: always() && !cancelled()
     runs-on: ubuntu-latest

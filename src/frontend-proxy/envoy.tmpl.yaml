@@ -79,19 +79,6 @@ static_resources:
                             prefix_rewrite: "/"
                             upgrade_configs:
                               - upgrade_type: websocket
-                        - match: { path: "/profiles" }
-                          redirect: { path_redirect: "/profiles/" }
-                        - match: { prefix: "/profiles/" }
-                          route: { cluster: profiles }
-                        - match: { path: "/chatbot" }
-                          redirect: { path_redirect: "/chatbot/" }
-                        - match: { prefix: "/chatbot/" }
-                          route:
-                            cluster: chatbot
-                            prefix_rewrite: "/"
-                            timeout: 0s
-                            upgrade_configs:
-                              - upgrade_type: websocket
                         - match: { prefix: "/" }  # Default/catch-all route - keep last since prefix:"/" matches everything
                           route: { cluster: frontend }
                 http_filters:
@@ -314,31 +301,6 @@ static_resources:
                     socket_address:
                       address: ${TELEMETRY_DOCS_HOST}
                       port_value: ${TELEMETRY_DOCS_PORT}
-    - name: chatbot
-      type: STRICT_DNS
-      lb_policy: ROUND_ROBIN
-      typed_dns_resolver_config: *dns_resolver
-      load_assignment:
-        cluster_name: chatbot
-        endpoints:
-          - lb_endpoints:
-              - endpoint:
-                  address:
-                    socket_address:
-                      address: ${CHATBOT_HOST}
-                      port_value: ${CHATBOT_PORT}
-    - name: profiles
-      type: STRICT_DNS
-      lb_policy: ROUND_ROBIN
-      load_assignment:
-        cluster_name: profiles
-        endpoints:
-          - lb_endpoints:
-              - endpoint:
-                  address:
-                    socket_address:
-                      address: ${FIREPIT_HOST}
-                      port_value: ${FIREPIT_PORT}
 admin:
   address:
     socket_address:
