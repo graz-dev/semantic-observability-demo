@@ -1,0 +1,45 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+clickhouse:
+  # Kept deliberately minimal (PLAN.md task 5.2): single shard, single
+  # replica, no clustering. This is a talk demo, not a production deployment.
+  image: clickhouse/clickhouse-server:25.3
+  user: demo
+  password: demo
+  # 2Gi/1cpu was the original guess (PLAN.md task 5.2) and it OOMKilled under
+  # real continuous ingestion across all three signals from live-generator
+  # traffic — confirmed live (RESTARTS: 1, Last State: OOMKilled). Bumped
+  # with real headroom instead of nudging it up incrementally.
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 4Gi
+      cpu: "2"
+  storage: 5Gi
+
+weaver:
+  # Always a local build (PLAN.md D3-equivalent for this component) — it
+  # bakes in telemetry-schema/, so it can never be an off-the-shelf image.
+  # docker build -f src/weaver-live-check/Dockerfile -t otel-demo-fork/weaver-live-check:local .
+  # kind load docker-image otel-demo-fork/weaver-live-check:local --name otel-demo
+  image: otel-demo-fork/weaver-live-check:local
+  pullPolicy: Never
+  # otel-collector's Service lives in the otel-demo namespace, not this one —
+  # cross-namespace, same DNS pattern already verified for the clickhouse
+  # exporter (task 5.3). Findings land on the Collector's normal OTLP
+  # receiver and ride the existing logs pipeline (already exports to
+  # ClickHouse, task 4.2) — no additional export wiring needed on that leg.
+  # Scheme is required: weaver's OTLP logs exporter (tonic-based) rejects a
+  # bare host:port with "TonicLogsClient export failed: invalid URI" —
+  # confirmed live by sending it a bare address first.
+  collectorEndpoint: http://otel-collector.otel-demo.svc.cluster.local:4317
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m

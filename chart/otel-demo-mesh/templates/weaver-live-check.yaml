@@ -1,0 +1,74 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# PLAN.md §6. Grades a live fork of the demo's real OTLP traffic against
+# telemetry-schema/ (baked into the image, see src/weaver-live-check/
+# Dockerfile) and streams findings back to the Collector as OTLP logs, which
+# already flow into ClickHouse via the `clickhouse` exporter (task 4.2) —
+# so schema drift becomes a queryable table, not something you have to
+# watch a log tail for.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weaver-live-check
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: weaver-live-check
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: weaver-live-check
+  template:
+    metadata:
+      labels:
+        app: weaver-live-check
+    spec:
+      containers:
+        - name: weaver-live-check
+          image: {{ .Values.weaver.image }}
+          imagePullPolicy: {{ .Values.weaver.pullPolicy }}
+          args:
+            - registry
+            - live-check
+            - -r
+            - /telemetry-schema
+            - --input-source
+            - otlp
+            - --otlp-grpc-address
+            - "0.0.0.0"
+            - --otlp-grpc-port
+            - "4317"
+            # A long-running Deployment must never exit on a finding — that's
+            # the whole point (DEMO.md Act 4). --fail-on is for one-shot CI
+            # use, which this isn't.
+            - --fail-on
+            - none
+            # Default is 10s — confirmed live: without this, the pod
+            # crash-loops the moment traffic isn't already flowing (which it
+            # isn't until 4.3's fork exporter is wired). This Deployment
+            # should just stay up like every other long-running service.
+            - --inactivity-timeout
+            - "604800"
+            - --emit-otlp-logs
+            - --otlp-logs-endpoint
+            - {{ .Values.weaver.collectorEndpoint | quote }}
+            - --no-stats
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+          resources:
+            {{- toYaml .Values.weaver.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weaver-live-check
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: weaver-live-check
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317

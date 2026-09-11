@@ -1,0 +1,65 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Managed by the Altinity Kubernetes Operator (installed separately, cluster-
+# wide, into kube-system — see PLAN.md §5.1). This CR is what actually
+# creates the ClickHouse cluster, scoped to this namespace.
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: clickhouse
+  namespace: {{ .Release.Namespace }}
+spec:
+  configuration:
+    users:
+      {{ .Values.clickhouse.user }}/password: {{ .Values.clickhouse.password | quote }}
+      {{ .Values.clickhouse.user }}/networks/ip:
+        - 0.0.0.0/0
+    # Real problem found on the running cluster, not a guess: `nproc` inside
+    # the container reports 10 (the *host's* core count — containers see the
+    # underlying kernel's CPU count via /proc, not their own cgroup quota),
+    # while the actual cgroup limit is 2 CPUs (`resources.limits.cpu: "2"`
+    # below). ClickHouse sizes per-query parallelism (`max_threads`) off the
+    # detected count by default, so a single query could try to run ~5x more
+    # concurrent work than 2 CPUs can actually serve — pure scheduling
+    # overhead (observed as `clickhouse-server` alone using ~174% of its
+    # 200% limit, and ad-hoc queries taking minutes instead of seconds), not
+    # real throughput.
+    #
+    # Also tried capping `background_pool_size` alongside this — reverted.
+    # It crash-looped the server outright: ClickHouse's own startup sanity
+    # check requires `background_pool_size * background_merges_mutations_
+    # concurrency_ratio` >= `number_of_free_entries_in_pool_to_execute_
+    # mutation` (default 20), and background_pool_size=4 with the default
+    # ratio (2) only clears 8, well under that — confirmed via the exact
+    # `Code: 36 BAD_ARGUMENTS` this threw at startup. Not worth the extra
+    # setting to touch a second knob when `max_threads` was the one that
+    # actually explained the observed slowness.
+    profiles:
+      default/max_threads: 2
+    clusters:
+      - name: demo
+        layout:
+          shardsCount: 1
+          replicasCount: 1
+  defaults:
+    templates:
+      podTemplate: clickhouse-pod
+      volumeClaimTemplate: clickhouse-data
+  templates:
+    podTemplates:
+      - name: clickhouse-pod
+        spec:
+          containers:
+            - name: clickhouse
+              image: {{ .Values.clickhouse.image }}
+              resources:
+                {{- toYaml .Values.clickhouse.resources | nindent 16 }}
+    volumeClaimTemplates:
+      - name: clickhouse-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: {{ .Values.clickhouse.storage }}

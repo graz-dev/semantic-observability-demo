@@ -1,0 +1,12 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Everything this talk adds on top of the official demo (PLAN.md D6): a local
+# ClickHouse (via the Altinity Kubernetes Operator, installed separately —
+# see PLAN.md §5.1) and, later, Weaver live-check (§6). No chart dependency:
+# this is 100% our own templates, unlike ../otel-demo which wraps upstream's.
+apiVersion: v2
+name: otel-demo-mesh
+description: ClickHouse + Weaver live-check — the semantic mesh layer this talk adds
+type: application
+version: 0.1.0

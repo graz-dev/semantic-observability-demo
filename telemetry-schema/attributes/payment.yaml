@@ -7,39 +7,53 @@ attributes:
     type: string
     brief: Payment amount
     stability: stable
+    annotations:
+      owner: payment
     note: The monetary amount being charged
     examples: ["29.99", "99.95", "150.00"]
   - key: demo.payment.card_cvv
     type: int
     brief: Credit card CVV
     stability: stable
+    annotations:
+      owner: payment
     note: The credit card verification value used for payment. Deleted by the collector before export.
     examples: [672, 114]
   - key: demo.payment.card_number
     type: string
     brief: Credit card number
     stability: stable
+    annotations:
+      owner: payment
     note: The credit card number used for payment. Masked by the collector before export, keeping only the last 4 digits.
     examples: ["****-****-****-0454"]
   - key: demo.payment.card_type
     type: string
     brief: Credit card type
     stability: stable
+    annotations:
+      owner: payment
     note: The type of credit card being used for payment
     examples: ["visa", "mastercard", "amex"]
   - key: demo.payment.card_valid
     type: boolean
     brief: Card validation status
     stability: stable
+    annotations:
+      owner: payment
     note: Whether the card passed validation checks
   - key: demo.payment.charged
     type: boolean
     brief: Whether payment was successfully charged
     stability: stable
+    annotations:
+      owner: payment
     note: Indicates whether the payment transaction was successfully charged to the customer's payment method (true) or not charged (false). For synthetic requests, this is set to false.
   - key: demo.payment.transaction.id
     type: string
     brief: Payment transaction identifier
     stability: stable
+    annotations:
+      owner: payment
     note: Unique identifier for the payment transaction
     examples: ["txn-abc123", "PAY-456789"]

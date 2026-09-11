@@ -7,4 +7,6 @@ attributes:
     type: boolean
     brief: Whether recommendation caching is enabled
     stability: stable
+    annotations:
+      owner: feature_flag
     note: Indicates whether the recommendation service has caching enabled for this request (feature flag)

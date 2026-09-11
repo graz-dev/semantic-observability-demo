@@ -135,7 +135,7 @@ progression:
 
 ---
 
-## 3. Demo architecture: one cluster, three namespaces
+## 3. Demo architecture: one cluster, two namespaces
 
 Everything runs on Kubernetes — a local `kind` cluster for rehearsal and the
 workshop, the same manifests against any cluster for the recording. There is
@@ -146,11 +146,23 @@ implementation plan and rationale behind every choice below.
 
 ```
 kind cluster (1 control-plane + 2 workers)
-├── namespace: otel-demo            the webstore app, load generator, flagd,
-│                                    and the OTel Collector — always on
-├── namespace: otel-demo-swamp      Jaeger, Prometheus, Grafana, OpenSearch
-└── namespace: otel-demo-mesh       ClickHouse, Weaver live-check
+├── namespace: otel-demo       the webstore app, load generator, flagd, the
+│                               OTel Collector, and Jaeger/Prometheus/Grafana/
+│                               OpenSearch — one Helm release, deployed as
+│                               the official chart normally would
+└── namespace: otel-demo-mesh  ClickHouse, Weaver live-check — what we built
+                                for this talk, kept deliberately separate
 ```
+
+An earlier draft of this plan put Jaeger/Prometheus/Grafana/OpenSearch in
+their own `otel-demo-swamp` namespace. Inspecting the actual upstream chart
+ruled that out: every one of its subcharts resolves its namespace to the
+release namespace, so cleanly splitting them out would mean installing the
+whole chart two or three times with most components disabled in each —
+real cost for a boundary that only matters for the story we're telling, not
+technically. Two namespaces still draws the boundary that matters: the
+official chart, deployed the way it's meant to be, versus what this talk
+adds on top.
 
 Multiple nodes are not cosmetic: they let the audience see pods actually
 scheduled and load-balanced across machines, which a single-node cluster
@@ -161,11 +173,11 @@ would paper over.
 The compose version of this plan had Act 2 tear down the swamp stack and
 bring up a separate mesh stack (`make stop && make start-mesh`). On
 Kubernetes there is no reason to do that: cross-namespace DNS just works, so
-**the same Collector fans out to both `otel-demo-swamp` and `otel-demo-mesh`
-concurrently, all the time.**
+**the same Collector fans out to Jaeger/Prometheus/OpenSearch (in `otel-demo`)
+and to `otel-demo-mesh` concurrently, all the time.**
 
 ```
-services ──▶ OTel Collector ──┬──▶ Jaeger / Prometheus / OpenSearch   (otel-demo-swamp)
+services ──▶ OTel Collector ──┬──▶ Jaeger / Prometheus / OpenSearch   (otel-demo, same release)
               (otel-demo)     └──▶ ClickHouse                          (otel-demo-mesh)
                                └──▶ Weaver live-check ──▶ findings as OTLP logs ──▶ ClickHouse
 ```
@@ -176,16 +188,18 @@ stop-the-world transition with dead air while containers restart, and becomes
 between acts. The narrative in [section 4](#4-the-demo-script) is written
 for this version.
 
-### Ingress: the URLs do not change
+### No Ingress, no Gateway API — the URLs do not change anyway
 
 `frontend-proxy` (Envoy) already does all the path-based routing this demo
 needs — `/jaeger/ui`, `/grafana/`, `/feature/`, `/telemetry/`, `/loadgen/` all
-resolve through one process on one port today. On Kubernetes, one Ingress (or
-`kind`'s `extraPortMappings`, TBD in PLAN.md) points at the `frontend-proxy`
-Service in `otel-demo`, and every `http://localhost:8080/...` link already
-used throughout this document keeps working unchanged. This is why the
-narrative content below barely moves — only *how the cluster comes up*
-changes, not what you click once it's up.
+resolve through one process on one port today. Putting a Kubernetes Ingress
+or a Gateway API `Gateway` in front of it would just be a second L7 router
+doing the same job Envoy already does. Instead, `kind`'s `extraPortMappings`
+map host `:8080` straight to a `NodePort` on the `frontend-proxy` Service in
+`otel-demo` — one fewer moving part, and every `http://localhost:8080/...`
+link already used throughout this document keeps working unchanged. This is
+why the narrative content below barely moves — only *how the cluster comes
+up* changes, not what you click once it's up.
 
 ### ClickHouse target
 
@@ -619,14 +633,60 @@ rather than assumptions:
 These are assumptions in the plan that have not been tested yet, listed so they
 get checked rather than discovered on stage:
 
-- **Trace/log correlation on real demo traffic.** Joining logs to traces needs
-  `TraceId` populated on log records. The demo services do emit logs with trace
-  context — today's Grafana config already correlates Jaeger to OpenSearch via
-  `filterByTraceID` — but confirm the coverage in ClickHouse before scripting a
-  log-based beat around it.
 - **Metrics exporter maturity.** Metrics are `Alpha` while traces and logs are
   `Beta`. The demo's argument rests on traces, so this is not load-bearing, but
   do not build a headline moment on the metrics tables.
+
+### Trace/log/metric correlation — verified on the real K8s deployment, with real numbers
+
+Not a synthetic test this time: this ran against the actual cluster from
+PLAN.md §4/§5, fed by real `frontend`/`checkout`/`payment` traffic that
+Locust was driving live.
+
+`TraceId` coverage in `otel_logs`: 66.4% of log records carry one (2,792 of
+4,205) — not every log line is request-scoped (startup/health-check logs
+aren't), so this is the realistic ceiling, not a gap to fix.
+
+One query, three tables, correlated by `TraceId` (traces → logs) and
+`ServiceName` (traces → the collector's `span_metrics`-derived duration
+histogram — a second, independent measurement of the same requests):
+
+```sql
+WITH
+  svc_traces AS (
+    SELECT TraceId, SpanId, StatusCode, Duration
+    FROM otel_traces
+    WHERE ServiceName = 'frontend' AND Timestamp > now() - INTERVAL 15 MINUTE
+  )
+SELECT
+  (SELECT count() FROM svc_traces) AS span_count,
+  (SELECT countIf(StatusCode = 'STATUS_CODE_ERROR') FROM svc_traces) AS error_count,
+  (SELECT round(avg(Duration)/1e6, 2) FROM svc_traces) AS avg_trace_duration_ms,
+  (SELECT count() FROM otel_logs WHERE TraceId IN (SELECT TraceId FROM svc_traces)) AS correlated_log_count,
+  (SELECT round(sum(Sum)/sum(Count), 2) FROM otel_metrics_histogram
+     WHERE ServiceName = 'frontend' AND MetricName = 'traces.span.metrics.duration'
+       AND TimeUnix > now() - INTERVAL 15 MINUTE) AS avg_span_metric_duration_ms
+```
+
+Result, from live traffic:
+
+```
+span_count: 11918   error_count: 0   avg_trace_duration_ms: 103.12
+correlated_log_count: 3347
+avg_span_metric_duration_ms: 74.79
+```
+
+Two things worth noting for the talk itself: the trace-measured average
+(103.12ms) and the independently-computed span-metrics average (74.79ms)
+*don't match exactly* — different aggregation pipelines measuring
+overlapping-but-not-identical things, which is itself a small, honest
+illustration of why "one number" from one signal is never the whole picture.
+
+**A real operational finding along the way:** the first ClickHouse sizing
+guess (2Gi memory limit) OOMKilled under this exact load — real continuous
+writes across three signals, not a toy amount of data. Bumped to 4Gi and it
+has been stable since. Worth keeping in mind for the workshop's minimum
+laptop spec.
 
 - **Checkout error status.** Act 2 Query 3 and Act 5 assume the `checkout` span
   is marked `STATUS_CODE_ERROR` when the charge fails. The deferred
@@ -648,19 +708,26 @@ These are new questions introduced by the Kubernetes pivot, distinct from the
 ClickHouse-level facts above, which remain true regardless of orchestrator:
 
 - **Cross-namespace DNS fan-out under real load.** The "both backends run
-  concurrently" design in [section 3](#3-demo-architecture-one-cluster-three-namespaces)
-  assumes the Collector in `otel-demo` can reach Services in `otel-demo-swamp`
-  and `otel-demo-mesh` without extra networking config. This is standard
-  Kubernetes behavior but has not been tried against this specific chart setup.
+  concurrently" design in [section 3](#3-demo-architecture-one-cluster-two-namespaces)
+  assumes the Collector in `otel-demo` can reach Services in `otel-demo-mesh`
+  without extra networking config (Jaeger/Prometheus/OpenSearch are same-namespace
+  and need no such check). This is standard Kubernetes behavior but has not
+  been tried against this specific chart setup.
 - **Altinity Kubernetes Operator on `kind`.** Needs one clean end-to-end run:
   install the operator, apply a `ClickHouseInstallation`, confirm the
   Collector can reach it, before trusting it for the workshop.
-- **Image availability.** The mixed image strategy in PLAN.md assumes
-  `ghcr.io/open-telemetry/demo:3.0.0-<service>` tags exist for every
-  unmodified service. Confirm before relying on it.
-- **Ingress vs `extraPortMappings`.** Whichever mechanism preserves
-  `http://localhost:8080` needs to survive a full cluster teardown/recreate
-  cycle, since that is exactly what a workshop attendee will do.
+- **Image availability — verified.** `ghcr.io/open-telemetry/demo:3.0.0-<service>`
+  tags were checked directly against the registry for every core service
+  (`frontend`, `checkout`, `payment`, `cart`, `ad`, `currency`,
+  `recommendation`, `shipping`, `quote`, `email`, `product-catalog`,
+  `accounting`, `fraud-detection`, `load-generator`, `frontend-proxy`,
+  `flagd-ui`, `image-provider`) — all exist, all multi-arch (amd64 + arm64).
+- **NodePort vs teardown/recreate — partially verified.** The `kind` cluster
+  config (D8: `extraPortMappings` → `NodePort 30080` on `frontend-proxy`, no
+  Ingress/Gateway) survived one full `kind delete cluster` + `kind create
+  cluster` cycle cleanly. Still to confirm once `frontend-proxy` is actually
+  deployed: that the `NodePort` Service itself comes back correctly bound
+  after the same cycle, which is exactly what a workshop attendee will do.
 
 ---
 
@@ -676,9 +743,11 @@ kind delete cluster
 ```
 
 (Provisional; PLAN.md is the source of truth for exact commands once the
-chart and cluster config exist. Both backend namespaces come up with the
-single Helm release — there is no separate "swamp" vs "mesh" install step,
-per [section 3](#3-demo-architecture-one-cluster-three-namespaces).)
+chart and cluster config exist. There is no separate "swamp" install step —
+Jaeger/Prometheus/Grafana/OpenSearch come up as part of the one official-chart
+release in `otel-demo`. `otel-demo-mesh` — ClickHouse and Weaver live-check —
+is a second, small release of our own, per
+[section 3](#3-demo-architecture-one-cluster-two-namespaces).)
 
 `demo/README.md` walks through the same five acts as self-paced exercises, each
 with a checkpoint the attendee can verify:

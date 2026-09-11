@@ -1,0 +1,16 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Thin wrapper around the official opentelemetry-demo chart (PLAN.md D2).
+# We don't fork or vendor its templates — we only supply values. Everything
+# fork-specific (ClickHouse, Weaver live-check) lives in a separate chart in
+# ../otel-demo-mesh, deployed to its own namespace (PLAN.md D6).
+apiVersion: v2
+name: otel-demo
+description: Semantic observability demo — webstore app, deployed via the official OpenTelemetry demo chart
+type: application
+version: 0.1.0
+dependencies:
+  - name: opentelemetry-demo
+    version: "0.41.0"
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts

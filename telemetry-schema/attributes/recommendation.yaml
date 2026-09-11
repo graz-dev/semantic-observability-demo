@@ -7,4 +7,6 @@ attributes:
     type: boolean
     brief: Whether the recommendation cache was hit
     stability: stable
+    annotations:
+      owner: recommendation
     note: Indicates whether the recommendation was served from cache (true) or computed fresh (false)

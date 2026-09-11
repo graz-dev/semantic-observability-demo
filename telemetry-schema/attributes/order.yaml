@@ -7,17 +7,23 @@ attributes:
     type: string
     brief: Order identifier
     stability: stable
+    annotations:
+      owner: order
     note: The unique identifier for an order
     examples: ["order-123", "ORD-456789"]
   - key: demo.order.amount
     type: double
     brief: Total order amount
     stability: stable
+    annotations:
+      owner: order
     note: The total monetary amount of the order
     examples: [99.99, 150.50]
   - key: demo.order.items.count
     type: int
     brief: Number of items in order
     stability: stable
+    annotations:
+      owner: order
     note: The count of distinct items in the order
     examples: [1, 5, 10]

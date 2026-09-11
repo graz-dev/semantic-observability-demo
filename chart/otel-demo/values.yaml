@@ -1,0 +1,243 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Our overrides on top of the official opentelemetry-demo chart's own
+# values.yaml, nested under the dependency name per Helm subchart convention.
+# See PLAN.md §3 for what's still missing here (collector config, ClickHouse
+# wiring, checkout/telemetry-docs/frontend-proxy image overrides).
+opentelemetry-demo:
+  components:
+    # The official chart enables every component by default, including ones
+    # this fork removed at the source level entirely (agent/mcp/chatbot —
+    # see the scaffolding cleanup) and ones that were optional "full profile"
+    # extras under docker-compose, off by default (accounting/fraud-detection
+    # /kafka — the async order-processing pipeline, unused by this demo's
+    # narrative; firepit — the removed eBPF profiling UI). Disabled here to
+    # keep the footprint workshop-laptop-sized; nothing below is a dependency
+    # of the core webstore path this demo exercises.
+    agent:
+      enabled: false
+    mcp:
+      enabled: false
+    chatbot:
+      enabled: false
+    firepit:
+      enabled: false
+    accounting:
+      enabled: false
+    fraud-detection:
+      enabled: false
+    kafka:
+      enabled: false
+    # checkout, accounting and fraud-detection each carry a `wait-for-kafka`
+    # initContainer (they publish/consume order events over the disabled
+    # kafka topic). accounting/fraud-detection are disabled outright above,
+    # so theirs is moot; checkout stays enabled, so its init container would
+    # otherwise block startup forever waiting for a broker that never comes
+    # up — confirmed live: checkout sat in Init:0/1 during the first
+    # bootstrap install until this override was added.
+    checkout:
+      initContainers: []
+      # The chart's stock env sets KAFKA_ADDR=kafka:9092 unconditionally,
+      # regardless of whether the `kafka` component is enabled. checkout's
+      # own code only *guards* sendToPostProcessor() on kafkaBrokerSvcAddr
+      # being non-empty (src/checkout/main.go:412) — it does NOT guard on
+      # whether the producer client actually connected. If
+      # kafka.CreateKafkaProducer() fails (kafka disabled, nothing at that
+      # address), the error is only logged, KafkaProducerClient stays nil,
+      # and kafkaBrokerSvcAddr stays "kafka:9092" — so the guard still
+      # passes and the next order placed nil-pointer-panics inside
+      # sendToPostProcessor. Confirmed live: checkout crash-looped (21
+      # restarts) the moment load-generator resumed sending it real orders.
+      # This is a real upstream bug, independent of anything we changed —
+      # worth reporting, but not ours to fix in this fork's checkout source
+      # right now. Blanking KAFKA_ADDR here makes the guard false, which is
+      # exactly what docker-compose's "core" profile did implicitly by never
+      # setting the var at all.
+      envOverrides:
+        - name: KAFKA_ADDR
+          value: ""
+
+    # PLAN.md D8 / task 2.3: no Ingress, no Gateway API. frontend-proxy
+    # (Envoy) already does all the path-based routing this demo needs, so it
+    # is exposed directly as a NodePort matching kind/cluster.yaml's
+    # extraPortMappings (host :8080 -> container :30080).
+    frontend-proxy:
+      service:
+        type: NodePort
+        port: 8080
+        nodePort: 30080
+      # PLAN.md D3: envoy.tmpl.yaml diverged from upstream in the scaffolding
+      # cleanup (chatbot/profiles routes removed), so this is always a local
+      # build: `docker build -f src/frontend-proxy/Dockerfile -t
+      # otel-demo-fork/frontend-proxy:local .` from repo root, then
+      # `kind load docker-image otel-demo-fork/frontend-proxy:local --name
+      # otel-demo`. pullPolicy Never because this tag only ever exists inside
+      # the kind nodes' local containerd — an attempted registry pull would
+      # just fail.
+      imageOverride:
+        repository: otel-demo-fork/frontend-proxy
+        tag: local
+        pullPolicy: Never
+      # The chart's own default env list for this component was written for
+      # *its* envoy.tmpl.yaml, which still targets a k6-based load generator.
+      # This fork's load-generator runs Locust instead (a real divergence,
+      # not just this file), whose web UI our envoy.tmpl.yaml expects at
+      # ${LOCUST_WEB_HOST}:${LOCUST_WEB_PORT} for the /loadgen/ route.
+      # Without these, Envoy's bootstrap validation hard-fails at startup —
+      # confirmed live: "SocketAddressValidationError: Address: value length
+      # must be at least 1 characters" (an empty envsubst substitution) is
+      # exactly what came back before this was added.
+      envOverrides:
+        - name: LOCUST_WEB_HOST
+          value: load-generator
+        - name: LOCUST_WEB_PORT
+          value: "8089"
+
+    # PLAN.md D3: this fork replaced upstream's k6/JavaScript load generator
+    # with Locust/Python (real source-level divergence, see src/load-generator/
+    # locustfile.py) — always a local build:
+    #   docker build -f src/load-generator/Dockerfile -t otel-demo-fork/load-generator:local .
+    #   kind load docker-image otel-demo-fork/load-generator:local --name otel-demo
+    load-generator:
+      imageOverride:
+        repository: otel-demo-fork/load-generator
+        tag: local
+        pullPolicy: Never
+      # The chart's stock env list is k6-shaped (K6_TARGET_URL, K6_BROWSER_*,
+      # etc.) — left in place, harmless/unused once Locust is the entrypoint.
+      # These are the values docker-compose's .env used to supply, ported
+      # 1:1: LOCUST_WEB_HOST=0.0.0.0 here is the bind address *inside this
+      # container*, distinct from frontend-proxy's LOCUST_WEB_HOST=load-generator
+      # above, which is the DNS name used to *reach* it.
+      envOverrides:
+        - name: LOCUST_WEB_HOST
+          value: "0.0.0.0"
+        - name: LOCUST_WEB_PORT
+          value: "8089"
+        - name: LOCUST_USERS
+          value: "5"
+        - name: LOCUST_HOST
+          value: http://frontend-proxy:8080
+        - name: LOCUST_HEADLESS
+          value: "false"
+        - name: LOCUST_AUTOSTART
+          value: "true"
+        - name: LOCUST_HTTP_USER_WEIGHT
+          value: "9"
+        - name: LOCUST_BROWSER_USER_WEIGHT
+          value: "1"
+        # Off for iterative dev/wiring work: headless Chromium was a real,
+        # measured chunk of CPU on an already CPU-saturated laptop (confirmed
+        # via `docker top` — chrome processes at ~27%+18% on one node,
+        # alongside clickhouse-server as the single largest consumer at the
+        # time). Docker Desktop already passes through the host's full 10
+        # cores (no artificial cap to raise), so cutting demand was the only
+        # real lever. Flip back to "true" before the actual recording/
+        # rehearsal, where full-fidelity traffic (including real browser
+        # sessions) matters.
+        - name: LOCUST_BROWSER_TRAFFIC_ENABLED
+          value: "false"
+        - name: FLAGD_OFREP_PORT
+          value: "8016"
+      # Exposes the Locust web UI as a Service so frontend-proxy's /loadgen/
+      # route (-> ${LOCUST_WEB_HOST}:${LOCUST_WEB_PORT}) has something to
+      # reach. The stock chart doesn't define this at all (upstream's k6
+      # setup has no equivalent web UI).
+      service:
+        port: 8089
+      # docker-compose ran this at 1500Mi specifically because of Chromium
+      # (LOCUST_BROWSER_TRAFFIC_ENABLED=true drives real browser traffic, not
+      # just HTTP). The chart's stock 512Mi default is sized for k6, not this.
+      resources:
+        limits:
+          memory: 1500Mi
+
+    # TODO (task 8.2): checkout imageOverride once the Act 3 fix (task 8.1)
+    # lands and the image is built + `kind load docker-image`'d.
+
+    # TODO (task 3.2/6.1): telemetry-docs imageOverride — this one always
+    # needs a local build, since it bakes in our own telemetry-schema/.
+
+  # PLAN.md D7 (revised): the chart's own default collector config is not a
+  # stub, it's a real K8s-native config (see PLAN.md §4 for how this was
+  # confirmed by reading the live rendered ConfigMap, not guessed). We only
+  # add what's genuinely missing: our PII redaction processor, and a
+  # ClickHouse exporter wired into every pipeline alongside the existing
+  # swamp backends (D4 — both run concurrently, nothing is replaced).
+  #
+  # IMPORTANT: Helm deep-merges maps but replaces lists wholesale. Every
+  # `processors`/`exporters` list below is the chart's own original list
+  # (confirmed from `helm show values`, the pre-preset-injection source, not
+  # the live rendered ConfigMap which also carries preset-injected entries
+  # like k8s_attributes — restating that list here would be wrong) with our
+  # additions appended. `receivers` is untouched everywhere, so it inherits
+  # from the chart's default unmodified.
+  opentelemetry-collector:
+    # Trims collector overhead that produces data no Act in DEMO.md ever
+    # queries: host-level CPU/mem/disk scraping, kubelet stats API scraping,
+    # and cluster-wide k8s object watching. This demo's whole argument runs
+    # on app-level `demo.*` attributes and business signals, not K8s
+    # infrastructure metrics, so this is pure savings with no narrative
+    # cost. Left untouched: `kubernetesAttributes` (the k8s_attributes
+    # *processor* — cheap, and the k8s.pod.name/k8s.namespace.name
+    # enrichment it adds is worth keeping for "this is really running on
+    # k8s" context) and `annotationDiscovery` (uncertain enough about what
+    # else might quietly depend on it to cut without checking first).
+    presets:
+      hostMetrics:
+        enabled: false
+      kubeletMetrics:
+        enabled: false
+      clusterMetrics:
+        enabled: false
+    config:
+      processors:
+        transform/redact_sensitive_data:
+          error_mode: ignore
+          trace_statements:
+            - context: span
+              statements:
+                - delete_key(attributes, "demo.payment.card_cvv") where attributes["demo.payment.card_cvv"] != nil
+                - set(attributes["user.hash"], SHA256(attributes["user.email"])) where attributes["user.email"] != nil
+                - delete_key(attributes, "user.email") where attributes["user.email"] != nil
+                - replace_pattern(attributes["demo.payment.card_number"], "^\\d{4}-\\d{4}-\\d{4}-", "****-****-****-") where attributes["demo.payment.card_number"] != nil
+      exporters:
+        # otel-demo-mesh's ClickHouseInstallation Service, confirmed reachable
+        # cross-namespace before this was written (PLAN.md task 5.3). demo/demo
+        # is the workshop-default credential set in chart/otel-demo-mesh/values.yaml
+        # — fine for a local kind cluster with no external exposure, not meant
+        # to be a real secret.
+        clickhouse:
+          endpoint: tcp://clickhouse-clickhouse.otel-demo-mesh.svc.cluster.local:9000?dial_timeout=10s
+          username: demo
+          password: demo
+          database: otel
+          create_schema: true
+          ttl: 24h
+          timeout: 10s
+          sending_queue:
+            queue_size: 1000
+        # Task 4.3: forks a copy of traces to Weaver live-check (chart/
+        # otel-demo-mesh), which grades them against telemetry-schema/ in
+        # real time (DEMO.md Act 4) and streams findings back as OTLP logs
+        # — those ride the *existing* logs pipeline below straight into
+        # ClickHouse, no separate wiring needed for that leg.
+        otlp/weaver:
+          endpoint: weaver-live-check.otel-demo-mesh.svc.cluster.local:4317
+          tls:
+            insecure: true
+          # The collector's OTLP exporter gzips by default; weaver's OTLP
+          # receiver doesn't support decompressing it — confirmed live:
+          # "rpc error: code = Unimplemented desc = Content is compressed
+          # with `gzip` which isn't supported", every batch dropped.
+          compression: none
+      service:
+        pipelines:
+          traces:
+            processors: [memory_limiter, resourcedetection, resource, transform/sanitize_logs, gen_ai_normalizer, transform/redact_sensitive_data]
+            exporters: [otlp_grpc/jaeger, debug, span_metrics, clickhouse, otlp/weaver]
+          metrics:
+            exporters: [otlp_http/prometheus, debug, clickhouse]
+          logs:
+            exporters: [opensearch, debug, clickhouse]

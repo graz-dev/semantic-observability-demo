@@ -1,0 +1,30 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Local cluster for the semantic observability demo (PLAN.md D1/§2.1).
+# 1 control-plane + 2 workers: enough to see pods actually scheduled and
+# spread across nodes, without being heavy on a workshop laptop.
+#
+# No Ingress controller and no Gateway API here on purpose: `frontend-proxy`
+# (Envoy) already does all the path-based L7 routing this demo needs
+# (/jaeger/ui, /grafana/, /feature/, /telemetry/, /loadgen/, default ->
+# frontend) exactly as it did under docker-compose. Putting an Ingress or a
+# Gateway in front of it would be a redundant second routing layer for zero
+# benefit. Instead, host :8080 maps directly to a NodePort on the
+# `frontend-proxy` Service (pinned to 30080 when that Service is created in
+# §3/§4) — see PLAN.md task 2.3.
+#
+# (kubernetes/ingress-nginx was retired by the Kubernetes project on
+# 2026-03-31 and is unmaintained; ruled out for that reason too, but it would
+# have been the wrong layer for this demo either way.)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: otel-demo
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
+  - role: worker
+  - role: worker
