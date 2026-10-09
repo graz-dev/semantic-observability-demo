@@ -1,0 +1,18 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# A Grafana dashboard over the ClickHouse telemetry (traces/logs and the
+# Weaver live-check findings). The grafana_dashboard label is what the demo's
+# Grafana sidecar watches for; it provisions any labelled ConfigMap in this
+# namespace. Queries target the ClickHouse datasource (uid: clickhouse) added
+# via grafana.datasources in values.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-semantic-observability
+  namespace: {{ .Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+data:
+  semantic-observability.json: |
+{{ .Files.Get "dashboards/semantic-observability.json" | indent 4 }}

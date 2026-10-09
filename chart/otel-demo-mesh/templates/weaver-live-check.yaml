@@ -33,6 +33,13 @@ spec:
             - live-check
             - -r
             - /telemetry-schema
+            # Grade live telemetry against the full semconv vocabulary, not
+            # just the attributes this demo's own registry references. The
+            # registry declares upstream semconv (manifest.yaml dependencies)
+            # but by default live-check excludes unreferenced dependency
+            # attributes, so every standard attribute the apps emit
+            # (server.address, http.*, rpc.*) is otherwise flagged as missing.
+            - --include-unreferenced
             - --input-source
             - otlp
             - --otlp-grpc-address
