@@ -57,12 +57,66 @@ opentelemetry-demo:
       envOverrides:
         - name: KAFKA_ADDR
           value: ""
+      resources:
+        limits:
+          memory: 128Mi
+
+    # Memory-limit bumps (see the flagd/product-catalog note below). The
+    # upstream chart caps many components below their own executables'
+    # resident size. With requests == limits and swap off on the nodes, the
+    # kernel's only reclaimable memory under that cap is the executable's own
+    # file-backed pages — so it evicts and immediately major-faults them back
+    # from disk in a tight loop (confirmed live for flagd/product-catalog/ad:
+    # rchar ~0 but read_bytes multi-GB/s, workingset_refault_file in the
+    # hundreds of millions, memory.events `max` in the millions, driving
+    # host iowait to ~50%). Raised to give real headroom above the working
+    # set; the nodes have ample RAM. ad is a JVM (heap + metaspace + code
+    # cache must stay resident); frontend-proxy is Envoy (~100Mi binary).
+    flagd:
+      resources:
+        limits:
+          memory: 192Mi
+    product-catalog:
+      resources:
+        limits:
+          memory: 128Mi
+    ad:
+      resources:
+        limits:
+          memory: 600Mi
+    currency:
+      resources:
+        limits:
+          memory: 128Mi
+    shipping:
+      resources:
+        limits:
+          memory: 128Mi
+    valkey-cart:
+      resources:
+        limits:
+          memory: 128Mi
+    quote:
+      resources:
+        limits:
+          memory: 128Mi
+    image-provider:
+      resources:
+        limits:
+          memory: 128Mi
+    opamp-server:
+      resources:
+        limits:
+          memory: 128Mi
 
     # PLAN.md D8 / task 2.3: no Ingress, no Gateway API. frontend-proxy
     # (Envoy) already does all the path-based routing this demo needs, so it
     # is exposed directly as a NodePort matching kind/cluster.yaml's
     # extraPortMappings (host :8080 -> container :30080).
     frontend-proxy:
+      resources:
+        limits:
+          memory: 192Mi
       service:
         type: NodePort
         port: 8080
@@ -213,7 +267,9 @@ opentelemetry-demo:
           username: demo
           password: demo
           database: otel
-          create_schema: true
+          # Schema is created by ClickHouse's init script in otel-demo-mesh
+          # (templates/clickhouse-init-scripts.yaml), not by the collector.
+          create_schema: false
           ttl: 24h
           timeout: 10s
           sending_queue:
@@ -241,3 +297,38 @@ opentelemetry-demo:
             exporters: [otlp_http/prometheus, debug, clickhouse]
           logs:
             exporters: [opensearch, debug, clickhouse]
+
+  grafana:
+    # Replaces upstream's list rather than merging, so its OpenSearch plugin
+    # is restated here.
+    plugins:
+      - grafana-opensearch-datasource
+      - grafana-clickhouse-datasource
+    # Mounted next to upstream's sidecar-provisioned datasources, so the
+    # file name must not collide with theirs (default/jaeger/opensearch).
+    datasources:
+      clickhouse.yaml:
+        apiVersion: 1
+        datasources:
+          - name: ClickHouse
+            uid: clickhouse
+            type: grafana-clickhouse-datasource
+            jsonData:
+              host: clickhouse-clickhouse.otel-demo-mesh.svc.cluster.local
+              port: 9000
+              protocol: native
+              username: demo
+              defaultDatabase: otel
+              traces:
+                defaultDatabase: otel
+                defaultTable: otel_traces
+                otelEnabled: true
+                otelVersion: latest
+                durationUnit: nanoseconds
+              logs:
+                defaultDatabase: otel
+                defaultTable: otel_logs
+                otelEnabled: true
+                otelVersion: latest
+            secureJsonData:
+              password: demo

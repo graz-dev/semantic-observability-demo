@@ -1,24 +1,218 @@
 # Copyright The OpenTelemetry Authors
 # SPDX-License-Identifier: Apache-2.0
 
-clickhouse:
-  # Kept deliberately minimal (PLAN.md task 5.2): single shard, single
-  # replica, no clustering. This is a talk demo, not a production deployment.
-  image: clickhouse/clickhouse-server:25.3
-  user: demo
-  password: demo
-  # 2Gi/1cpu was the original guess (PLAN.md task 5.2) and it OOMKilled under
-  # real continuous ingestion across all three signals from live-generator
-  # traffic — confirmed live (RESTARTS: 1, Last State: OOMKilled). Bumped
-  # with real headroom instead of nudging it up incrementally.
-  resources:
-    requests:
-      memory: 2Gi
-      cpu: 500m
-    limits:
-      memory: 4Gi
-      cpu: "2"
-  storage: 5Gi
+# Values for the Altinity `clickhouse` chart (dependency alias `chi`).
+chi:
+  # The operator is installed cluster-wide into kube-system (PLAN.md §5.1).
+  operator:
+    enabled: false
+  # Keeps the CHI named `clickhouse`, so the operator's Service stays
+  # clickhouse-clickhouse, which the collector's exporter points at.
+  fullnameOverride: clickhouse
+  clickhouse:
+    # Kept deliberately minimal (PLAN.md task 5.2): single shard, single
+    # replica, no clustering. This is a talk demo, not a production deployment.
+    replicasCount: 1
+    shardsCount: 1
+    image:
+      repository: altinity/clickhouse-server
+      tag: "26.3.16.10001.altinitystable"
+    defaultUser:
+      password: demo
+    users:
+      - name: demo
+        # sha256 of "demo"; the chart only accepts a secret or a hash here
+        password_sha256_hex: 2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea
+        hostIP: 0.0.0.0/0
+    # Adapted from https://github.com/filimonov/clickhouse-minimal (26.3,
+    # 512 MiB / 1 CPU), which documents each setting's upstream default.
+    # Differences: listeners are left to the operator, since the collector and
+    # Grafana use native TCP; memory limits and caches that this workload uses
+    # are scaled x8 for the 4 GiB limit, and thread pools x2 for 2 CPUs;
+    # connection and query concurrency are raised for collector inserts.
+    configurationFiles:
+      config.d/low-memory.xml: |
+        <clickhouse>
+            <logger>
+                <level>warning</level>
+                <log remove="1"/>
+                <errorlog remove="1"/>
+                <console>true</console>
+            </logger>
+
+            <mlock_executable>false</mlock_executable>
+            <max_server_memory_usage>3221225472</max_server_memory_usage>
+            <max_connections>128</max_connections>
+            <max_concurrent_queries>16</max_concurrent_queries>
+            <max_thread_pool_size>1000</max_thread_pool_size>
+
+            <cache_size_to_ram_max_ratio>0.0625</cache_size_to_ram_max_ratio>
+            <mark_cache_size>134217728</mark_cache_size>
+            <index_mark_cache_size>33554432</index_mark_cache_size>
+            <primary_index_cache_size>33554432</primary_index_cache_size>
+            <uncompressed_cache_size>0</uncompressed_cache_size>
+            <index_uncompressed_cache_size>0</index_uncompressed_cache_size>
+            <iceberg_metadata_files_cache_size>4194304</iceberg_metadata_files_cache_size>
+            <iceberg_metadata_files_cache_max_entries>64</iceberg_metadata_files_cache_max_entries>
+            <parquet_metadata_cache_size>16777216</parquet_metadata_cache_size>
+            <parquet_metadata_cache_max_entries>256</parquet_metadata_cache_max_entries>
+            <vector_similarity_index_cache_size>0</vector_similarity_index_cache_size>
+            <vector_similarity_index_cache_max_entries>0</vector_similarity_index_cache_max_entries>
+            <text_index_tokens_cache_size>0</text_index_tokens_cache_size>
+            <text_index_tokens_cache_max_entries>0</text_index_tokens_cache_max_entries>
+            <text_index_header_cache_size>0</text_index_header_cache_size>
+            <text_index_header_cache_max_entries>0</text_index_header_cache_max_entries>
+            <text_index_postings_cache_size>0</text_index_postings_cache_size>
+            <text_index_postings_cache_max_entries>0</text_index_postings_cache_max_entries>
+            <compiled_expression_cache_size>0</compiled_expression_cache_size>
+            <compiled_expression_cache_elements_size>0</compiled_expression_cache_elements_size>
+            <query_condition_cache_size>33554432</query_condition_cache_size>
+            <page_cache_min_size>0</page_cache_min_size>
+            <page_cache_max_size>0</page_cache_max_size>
+            <query_cache>
+                <max_size_in_bytes>0</max_size_in_bytes>
+                <max_entries>0</max_entries>
+                <max_entry_size_in_bytes>0</max_entry_size_in_bytes>
+                <max_entry_size_in_rows>0</max_entry_size_in_rows>
+            </query_cache>
+            <mmap_cache_size>64</mmap_cache_size>
+            <schema_inference_cache_max_elements_for_file>128</schema_inference_cache_max_elements_for_file>
+            <schema_inference_cache_max_elements_for_s3>128</schema_inference_cache_max_elements_for_s3>
+            <schema_inference_cache_max_elements_for_hdfs>128</schema_inference_cache_max_elements_for_hdfs>
+            <schema_inference_cache_max_elements_for_url>128</schema_inference_cache_max_elements_for_url>
+            <schema_inference_cache_max_elements_for_azure>128</schema_inference_cache_max_elements_for_azure>
+            <schema_inference_cache_max_elements_for_local>128</schema_inference_cache_max_elements_for_local>
+            <dns_cache_max_entries>256</dns_cache_max_entries>
+            <s3_credentials_provider_max_cache_size>8</s3_credentials_provider_max_cache_size>
+            <disk_connections_store_limit>0</disk_connections_store_limit>
+            <storage_connections_store_limit>0</storage_connections_store_limit>
+            <http_connections_store_limit>0</http_connections_store_limit>
+            <max_entries_for_hash_table_stats>128</max_entries_for_hash_table_stats>
+            <openSSL>
+                <server>
+                    <cacheSessions>false</cacheSessions>
+                    <sessionCacheSize>1</sessionCacheSize>
+                </server>
+                <client>
+                    <cacheSessions>false</cacheSessions>
+                </client>
+            </openSSL>
+
+            <background_pool_size>4</background_pool_size>
+            <background_merges_mutations_concurrency_ratio>1</background_merges_mutations_concurrency_ratio>
+            <background_buffer_flush_schedule_pool_size>1</background_buffer_flush_schedule_pool_size>
+            <background_move_pool_size>1</background_move_pool_size>
+            <background_fetches_pool_size>1</background_fetches_pool_size>
+            <background_common_pool_size>2</background_common_pool_size>
+            <background_schedule_pool_size>8</background_schedule_pool_size>
+            <background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size>
+            <background_distributed_schedule_pool_size>1</background_distributed_schedule_pool_size>
+            <tables_loader_foreground_pool_size>0</tables_loader_foreground_pool_size>
+            <tables_loader_background_pool_size>0</tables_loader_background_pool_size>
+
+            <merge_tree>
+                <max_bytes_to_merge_at_max_space_in_pool>2147483648</max_bytes_to_merge_at_max_space_in_pool>
+                <number_of_free_entries_in_pool_to_lower_max_size_of_merge>0</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+                <number_of_free_entries_in_pool_to_execute_mutation>1</number_of_free_entries_in_pool_to_execute_mutation>
+                <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>1</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+            </merge_tree>
+
+            <aggregated_zookeeper_log remove="1"/>
+            <asynchronous_insert_log remove="1"/>
+            <asynchronous_metric_log remove="1"/>
+            <azure_queue_log remove="1"/>
+            <backup_log remove="1"/>
+            <background_schedule_pool_log remove="1"/>
+            <blob_storage_log remove="1"/>
+            <cas_gc_log remove="1"/>
+            <cas_log remove="1"/>
+            <crash_log remove="1"/>
+            <dead_letter_queue remove="1"/>
+            <delta_lake_metadata_log remove="1"/>
+            <distributed_cache_log remove="1"/>
+            <distributed_cache_server_log remove="1"/>
+            <error_log remove="1"/>
+            <filesystem_cache_log remove="1"/>
+            <filesystem_read_prefetches_log remove="1"/>
+            <iceberg_metadata_log remove="1"/>
+            <instrumentation_trace_log remove="1"/>
+            <latency_log remove="1"/>
+            <metric_log remove="1"/>
+            <opentelemetry_span_log remove="1"/>
+            <part_log remove="1"/>
+            <predicate_statistics_log remove="1"/>
+            <processors_profile_log remove="1"/>
+            <query_log remove="1"/>
+            <query_metric_log remove="1"/>
+            <query_thread_log remove="1"/>
+            <query_views_log remove="1"/>
+            <session_log remove="1"/>
+            <s3queue_log remove="1"/>
+            <text_log remove="1"/>
+            <trace_log remove="1"/>
+            <transactions_info_log remove="1"/>
+            <transposed_metric_log remove="1"/>
+            <zookeeper_connection_log remove="1"/>
+            <zookeeper_log remove="1"/>
+        </clickhouse>
+      users.d/low-memory.xml: |
+        <clickhouse>
+            <profiles>
+                <default>
+                    <max_threads>2</max_threads>
+                    <max_insert_threads>1</max_insert_threads>
+                    <max_memory_usage>2684354560</max_memory_usage>
+                    <max_bytes_before_external_group_by>536870912</max_bytes_before_external_group_by>
+                    <max_bytes_before_external_sort>536870912</max_bytes_before_external_sort>
+                    <input_format_parallel_parsing>0</input_format_parallel_parsing>
+                    <output_format_parallel_formatting>0</output_format_parallel_formatting>
+                    <queue_max_wait_ms>1000</queue_max_wait_ms>
+                    <max_reverse_dictionary_lookup_cache_size_bytes>67108864</max_reverse_dictionary_lookup_cache_size_bytes>
+                    <use_uncompressed_cache>false</use_uncompressed_cache>
+                    <use_query_condition_cache>false</use_query_condition_cache>
+                    <use_query_cache>false</use_query_cache>
+                    <enable_reads_from_query_cache>false</enable_reads_from_query_cache>
+                    <enable_writes_to_query_cache>false</enable_writes_to_query_cache>
+                    <use_parquet_metadata_cache>false</use_parquet_metadata_cache>
+                    <use_iceberg_metadata_files_cache>false</use_iceberg_metadata_files_cache>
+                    <schema_inference_use_cache_for_file>false</schema_inference_use_cache_for_file>
+                    <schema_inference_use_cache_for_s3>false</schema_inference_use_cache_for_s3>
+                    <schema_inference_use_cache_for_hdfs>false</schema_inference_use_cache_for_hdfs>
+                    <schema_inference_use_cache_for_url>false</schema_inference_use_cache_for_url>
+                    <schema_inference_use_cache_for_azure>false</schema_inference_use_cache_for_azure>
+                    <use_cache_for_count_from_files>false</use_cache_for_count_from_files>
+                    <use_statistics_cache>false</use_statistics_cache>
+                    <merge_tree_use_deserialization_prefixes_cache>false</merge_tree_use_deserialization_prefixes_cache>
+                    <enable_filesystem_cache>false</enable_filesystem_cache>
+                    <use_page_cache_for_disks_without_file_cache>false</use_page_cache_for_disks_without_file_cache>
+                    <use_page_cache_for_local_disks>false</use_page_cache_for_local_disks>
+                    <use_page_cache_for_object_storage>false</use_page_cache_for_object_storage>
+                    <use_page_cache_with_distributed_cache>false</use_page_cache_with_distributed_cache>
+                    <use_text_index_tokens_cache>false</use_text_index_tokens_cache>
+                    <use_text_index_header_cache>false</use_text_index_header_cache>
+                    <use_text_index_postings_cache>false</use_text_index_postings_cache>
+                </default>
+            </profiles>
+        </clickhouse>
+    # 2Gi/1cpu OOMKilled under continuous three-signal ingestion (PLAN.md 5.2).
+    resources:
+      requests:
+        memory: 2Gi
+        cpu: 500m
+      limits:
+        memory: 4Gi
+        cpu: "2"
+    # Telemetry here is disposable (24h TTL), and the init script recreates
+    # the schema on every start.
+    persistence:
+      enabled: false
+    # Creates the otel schema the collector writes to, see
+    # templates/clickhouse-init-scripts.yaml. The DDL is idempotent, so it is
+    # safe to rerun on every start.
+    initScripts:
+      enabled: true
+      configMapName: clickhouse-init-scripts
+      alwaysRun: true
 
 weaver:
   # Always a local build (PLAN.md D3-equivalent for this component) — it

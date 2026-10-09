@@ -1,0 +1,23 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# The collector's clickhouse exporter runs with create_schema: false, so the
+# schema is created here instead, by the image's /docker-entrypoint-initdb.d
+# hook. files/otel-schema.ddl is the exporter's own DDL (v0.156.0) rendered
+# for database `otel` with a 24h TTL; it must match the collector's version.
+# The logs table uses the exporter's full-text index variant, which it only
+# selects on ClickHouse >= 26.2.
+# The entrypoint would run *.sql files as `default` with an empty password,
+# which the operator-managed `default` user rejects, hence the .sh wrapper.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.chi.clickhouse.initScripts.configMapName }}
+  namespace: {{ .Release.Namespace }}
+data:
+  01-otel-schema.sh: |
+    clickhouse-client --host 127.0.0.1 --user default \
+      --password {{ .Values.chi.clickhouse.defaultUser.password | quote }} \
+      --multiquery < /docker-entrypoint-initdb.d/otel-schema.ddl
+  otel-schema.ddl: |
+{{ .Files.Get "files/otel-schema.ddl" | indent 4 }}
