@@ -276,8 +276,10 @@ explicitly; it is a stronger claim live than a stack switch would have been.
 
 Show the three-line addition to the collector config that made it happen
 (the `clickhouse` exporter block, see PLAN.md for where it lives as a
-ConfigMap), then show the tables the exporter created by itself
-on first connection (`create_schema: true`):
+ConfigMap), then show the tables in the `otel` database. They come from the
+exporter's own DDL, which this demo applies as a ClickHouse init script
+(`chart/otel-demo-mesh/files/otel-schema.ddl`, with `create_schema: false` in
+the collector) so the schema exists before the first byte arrives:
 
 ```
 otel_traces                          otel_metrics_gauge
@@ -287,8 +289,9 @@ otel_logs                            otel_metrics_exponential_histogram
                                      otel_metrics_summary
 ```
 
-Worth saying out loud: nobody designed this schema, and there is no ETL job.
-The exporter created it, and every one of those is an ordinary MergeTree table —
+Worth saying out loud: we did not design this schema, and there is no ETL job.
+It is the exporter's own, unmodified apart from the database name and a 24h
+TTL, and every one of those is an ordinary MergeTree table —
 so all three signals are joinable with plain SQL from the first minute.
 
 **Query 1 — the technical view, the one Grafana already gave you:**
@@ -296,7 +299,7 @@ so all three signals are joinable with plain SQL from the first minute.
 ```sql
 SELECT
     ServiceName,
-    countIf(StatusCode = 'STATUS_CODE_ERROR') AS errors,
+    countIf(StatusCode = 'Error') AS errors,
     count() AS total,
     round(100 * errors / total, 2) AS error_pct
 FROM otel_traces
@@ -313,14 +316,18 @@ Same answer as the dashboard — but now it is SQL, so it composes.
 ```sql
 SELECT
     SpanAttributes['demo.user_context.loyalty_level'] AS loyalty_tier,
-    countIf(StatusCode = 'STATUS_CODE_ERROR') AS failed,
+    countIf(StatusCode = 'Error') AS failed,
     count() AS total
 FROM otel_traces
 WHERE ServiceName = 'payment'
+  AND SpanAttributes['demo.user_context.loyalty_level'] != ''
   AND Timestamp > now() - INTERVAL 15 MINUTE
 GROUP BY loyalty_tier
 ORDER BY failed DESC;
 ```
+
+(The `!= ''` filter matters: payment also emits a gRPC server span that carries
+the error but not the tier, and without the filter it shows up as a blank row.)
 
 Every single failure sits in `gold`. This is the moment the audience should feel
 the difference: one `GROUP BY` on a business attribute turned "5% errors" into
@@ -333,7 +340,7 @@ WITH failed AS (
     SELECT DISTINCT TraceId
     FROM otel_traces
     WHERE ServiceName = 'payment'
-      AND StatusCode = 'STATUS_CODE_ERROR'
+      AND StatusCode = 'Error'
       AND Timestamp > now() - INTERVAL 15 MINUTE
 )
 SELECT
@@ -452,16 +459,31 @@ knowledge, a business answer:
 
 ```sql
 SELECT
-    t.SpanAttributes['demo.user_context.loyalty_level'] AS tier,
+    tier,
     count() AS failed_orders,
-    round(sum(toFloat64OrZero(t.SpanAttributes['demo.order.amount'])), 2) AS revenue_at_risk
-FROM otel_traces AS t
-WHERE t.ServiceName = 'checkout'
-  AND t.StatusCode = 'STATUS_CODE_ERROR'
-  AND t.Timestamp > now() - INTERVAL 15 MINUTE
+    round(sum(amount), 2) AS revenue_at_risk
+FROM (
+    SELECT
+        TraceId,
+        maxIf(SpanAttributes['demo.user_context.loyalty_level'],
+              SpanAttributes['demo.user_context.loyalty_level'] != '') AS tier,
+        maxIf(toFloat64OrZero(SpanAttributes['demo.order.amount']),
+              SpanAttributes['demo.order.amount'] != '') AS amount,
+        countIf(ServiceName = 'checkout' AND StatusCode = 'Error') AS checkout_errors
+    FROM otel_traces
+    WHERE ServiceName IN ('checkout', 'payment')
+      AND Timestamp > now() - INTERVAL 15 MINUTE
+    GROUP BY TraceId
+    HAVING checkout_errors > 0
+)
 GROUP BY tier
 ORDER BY revenue_at_risk DESC;
 ```
+
+The tier is recorded on payment's span and the amount on checkout's, so the
+query joins them on the trace they share. That is the loyalty-tier origin
+problem from [section 8](#8-open-questions) showing up in the final query.
+The same SQL lives in [`demo/queries/`](demo/queries/).
 
 Closing line: the swamp was never a storage problem. It was a **meaning**
 problem, and meaning is something you design, publish, and enforce — exactly
@@ -614,7 +636,9 @@ rather than assumptions:
 - **All three signals reach ClickHouse and are queryable together.** The
   `clickhouseexporter` in contrib `0.159.0` reports `traces: Beta`,
   `logs: Beta`, `metrics: Alpha`. With `create_schema: true` it builds the nine
-  tables listed in Act 2 on startup, unprompted.
+  tables listed in Act 2 on startup, unprompted. The Kubernetes demo applies
+  the same DDL as an init script instead (`create_schema: false`), verified on
+  the live cluster with the nine tables present and receiving data.
 - **A single SQL statement can join across all three signals** — traces to logs
   on `TraceId`, and to metrics on `ServiceName` — because they are ordinary
   MergeTree tables in one database. No federation layer, no ETL.
@@ -660,7 +684,7 @@ WITH
   )
 SELECT
   (SELECT count() FROM svc_traces) AS span_count,
-  (SELECT countIf(StatusCode = 'STATUS_CODE_ERROR') FROM svc_traces) AS error_count,
+  (SELECT countIf(StatusCode = 'Error') FROM svc_traces) AS error_count,
   (SELECT round(avg(Duration)/1e6, 2) FROM svc_traces) AS avg_trace_duration_ms,
   (SELECT count() FROM otel_logs WHERE TraceId IN (SELECT TraceId FROM svc_traces)) AS correlated_log_count,
   (SELECT round(sum(Sum)/sum(Count), 2) FROM otel_metrics_histogram
@@ -689,7 +713,7 @@ has been stable since. Worth keeping in mind for the workshop's minimum
 laptop spec.
 
 - **Checkout error status.** Act 2 Query 3 and Act 5 assume the `checkout` span
-  is marked `STATUS_CODE_ERROR` when the charge fails. The deferred
+  is marked `Error` when the charge fails. The deferred
   `span.RecordError` in `main.go` suggests it is, but confirm in real data.
 - **Altinity Cloud from the collector.** TLS, native vs HTTP port, and
   credentials handling through a Kubernetes Secret need one end-to-end test

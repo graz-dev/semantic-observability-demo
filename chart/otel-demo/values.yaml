@@ -57,6 +57,14 @@ opentelemetry-demo:
       envOverrides:
         - name: KAFKA_ADDR
           value: ""
+      # Always a local build (Act 3 fix): `docker build -f
+      # src/checkout/Dockerfile -t otel-demo-fork/checkout:local .` from the
+      # repo root, then `kind load docker-image otel-demo-fork/checkout:local
+      # --name otel-demo`.
+      imageOverride:
+        repository: otel-demo-fork/checkout
+        tag: local
+        pullPolicy: Never
       resources:
         limits:
           memory: 128Mi
@@ -206,9 +214,6 @@ opentelemetry-demo:
       resources:
         limits:
           memory: 1500Mi
-
-    # TODO (task 8.2): checkout imageOverride once the Act 3 fix (task 8.1)
-    # lands and the image is built + `kind load docker-image`'d.
 
     # TODO (task 3.2/6.1): telemetry-docs imageOverride — this one always
     # needs a local build, since it bakes in our own telemetry-schema/.
