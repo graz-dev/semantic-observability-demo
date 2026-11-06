@@ -215,8 +215,16 @@ opentelemetry-demo:
         limits:
           memory: 1500Mi
 
-    # TODO (task 3.2/6.1): telemetry-docs imageOverride — this one always
-    # needs a local build, since it bakes in our own telemetry-schema/.
+    # Always a local build, since it bakes in our own telemetry-schema/:
+    # `docker build -f src/telemetry-docs/Dockerfile -t
+    # otel-demo-fork/telemetry-docs:local .` from the repo root, then
+    # `kind load docker-image otel-demo-fork/telemetry-docs:local --name
+    # otel-demo`.
+    telemetry-docs:
+      imageOverride:
+        repository: otel-demo-fork/telemetry-docs
+        tag: local
+        pullPolicy: Never
 
   # PLAN.md D7 (revised): the chart's own default collector config is not a
   # stub, it's a real K8s-native config (see PLAN.md §4 for how this was
