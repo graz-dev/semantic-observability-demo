@@ -158,7 +158,7 @@ before touching anything:
 | 3.2 | `chart/otel-demo/values.yaml` — our fork's identity: disable removed/unused components, `frontend-proxy` NodePort, image overrides for services we've modified, our `telemetry-schema/`-baked `telemetry-docs` image, our `otel-config.yml` mount for `product-catalog` | 3.1 | **In progress.** Done so far: `agent`/`mcp`/`chatbot`/`firepit`/`accounting`/`fraud-detection`/`kafka` disabled (removed stack + unused "full profile" extras); `checkout.initContainers: []` (its stock `wait-for-kafka` init container would otherwise hang forever once `kafka` is disabled — caught live, checkout sat in `Init:0/1` until this was added); `frontend-proxy` NodePort. Still open: image overrides for `frontend-proxy`/`checkout`/`telemetry-docs` once those are actually built locally (§8, §6); the `product-catalog` `otel-config.yml` question (3.6). **A third, more serious real bug found and fixed after a cluster restart**: `checkout` crash-looped (21 restarts) with a nil-pointer panic in `sendToPostProcessor` the moment it handled a real order. Root cause in `src/checkout/main.go`: the guard before calling it (`if cs.kafkaBrokerSvcAddr != ""`) only checks that `KAFKA_ADDR` is *set*, not that the Kafka producer actually connected — `kafka.CreateKafkaProducer()` failing (kafka disabled) only logs the error and leaves `KafkaProducerClient` nil, so the very next order placed panics. This is a genuine upstream bug independent of anything in this fork; docker-compose's "core" profile only avoided it by never setting `KAFKA_ADDR` at all. Fixed the same way here: `envOverrides: [{name: KAFKA_ADDR, value: ""}]`. Confirmed stable under continuous real order traffic afterward |
 | 3.3 | Confirm `ghcr.io/open-telemetry/demo:3.0.0-<service>` tags exist for every service we have **not** modified | D3 | **Done, verified.** Checked directly against the registry for all 16 core services — see DEMO.md §6 |
 | 3.4 | ~~Split Jaeger/Prometheus/Grafana/OpenSearch into their own namespace~~ — **done, resolved by D6's revision**: they stay in `otel-demo` with the app, as the chart deploys them by default | 3.1, D6 | Verified: every subchart template resolves its namespace to `.Release.Namespace` (e.g. `charts/grafana/templates/*.yaml` via `include "grafana.namespace"`), confirming no clean per-subchart namespace override exists — no further work needed here |
-| 3.5 | `demo/queries/*.sql` — the query pack from DEMO.md Acts 2 and 5, numbered and commented | none | Orchestrator-independent; can happen any time |
+| 3.5 | `demo/queries/*.sql` — the query pack from DEMO.md Acts 2 and 5, numbered and commented | none | Orchestrator-independent; can happen any time **Done.** `demo/queries/01…05-*.sql`, each executed against the live ClickHouse. Corrected against DEMO.md as written: the exporter stores the status as `'Error'` (not `STATUS_CODE_ERROR`), Query 2 needs a `loyalty_level != ''` filter, and the Act 5 query joins payment and checkout on `TraceId` because the tier only exists on payment's span |
 | 3.6 | Confirm whether `product-catalog`'s `/otel-config.yml` is actually needed | none | **Closed, with real evidence.** Once ClickHouse was queryable, ran the deferred re-check: `SELECT ... FROM otel_traces WHERE ServiceName = 'product-catalog'` shows `demo.product.id` and `demo.product.name` present on real spans. The service instruments itself correctly without the file mount — the speculative ConfigMap-mount plumbing was correctly never built |
 
 ### First bootstrap install — what actually happened
@@ -251,9 +251,11 @@ returned `"state": "running"` with real request stats, including a live
 `/api/checkout` failure — Locust is actually driving traffic against the real
 webstore, not just serving its own UI page.
 
-**D3 is now fully resolved for all four diverged components**
-(`frontend-proxy`, `load-generator`; `checkout` and `telemetry-docs` still
-pending their own triggers — §8.2 and §6.1 respectively).
+**D3 is now fully resolved for all diverged components**: `frontend-proxy`,
+`load-generator`, `checkout` (§8.2) and `telemetry-docs` are all built locally
+and loaded into the cluster, and so is `weaver-live-check` (§6.1).
+`telemetry-docs` makes `/telemetry` serve this repo's registry, including
+owners, dependencies and requirement levels.
 
 ---
 
@@ -314,9 +316,9 @@ Orchestrator-independent — can proceed in parallel with everything above.
 | Task | Output | Depends on | Notes |
 |---|---|---|---|
 | 7.1 | Domain ownership annotations in `telemetry-schema/attributes/*.yaml` | none | Must keep `weaver registry check` green throughout |
-| 7.2 | Rego policies under `telemetry-schema/policies/` (the `demo.` prefix rule, owning-domain requirement, etc. from DEMO.md §5) | none | |
-| 7.3 | Wire `--policy` into the existing `weaver-check` job in `checks.yml` | 7.2 | One-line addition to an already-working job |
-| 7.4 | The demo PR that adds `app.customer.tier` and gets rejected by CI (DEMO.md Act 4) | 7.2, 7.3 | This is a rehearsal artifact, not something merged |
+| 7.2 | Rego policies under `telemetry-schema/policies/` (the `demo.` prefix rule, owning-domain requirement, etc. from DEMO.md §5) | none | **Done.** `telemetry-schema/policies/attributes.rego` (`after_resolution`): `app_prefix_reserved`, `missing_demo_prefix`, `missing_owner`, `owner_domain_mismatch`, `unknown_dependency`, `same_domain_dependency`. Passes on the real registry; a deliberately broken copy trips all six. Weaver renders only the id/category/group/attr of a finding, so the id is the message. Also dropped the local `user.id` definition (duplicate of the upstream attribute), and added `annotations.depends_on` on `demo.order.amount` and `requirement_level: required` on it in `service.checkout` |
+| 7.3 | Wire `--policy` into the existing `weaver-check` job in `checks.yml` | 7.2 | One-line addition to an already-working job **Done.** `weaver-check` now runs `registry check -r source -p source/policies`. Not yet exercised on GitHub Actions, only locally with the same pinned image |
+| 7.4 | The demo PR that adds `app.customer.tier` and gets rejected by CI (DEMO.md Act 4) | 7.2, 7.3 | This is a rehearsal artifact, not something merged **Done as rehearsal artifacts, not a PR.** `demo/rehearsal/customer.yaml` + `demo/act4-policy.sh` (clean passes, with the change it fails on `app_prefix_reserved`), and `demo/act4-live-check.sh` (sends a `loyaltyLevel` span through the frontend-proxy OTLP route; `missing_attribute` and `invalid_format` findings are readable from ClickHouse about 3 s later) |
 
 ---
 
@@ -324,9 +326,9 @@ Orchestrator-independent — can proceed in parallel with everything above.
 
 | Task | Output | Depends on | Notes |
 |---|---|---|---|
-| 8.1 | Move the `span.SetAttributes` block in `src/checkout/main.go` to before `chargeCard` is called (DEMO.md Act 3) | none, can happen any time | The four-line fix the whole Act 3 narrative is built on |
-| 8.2 | Rebuild the `checkout` image, `kind load docker-image` it into the cluster, roll the Deployment | 8.1, D3 | This is the one service D3 always builds locally, since it diverges from upstream the moment 8.1 lands |
-| 8.3 | Re-run DEMO.md's Query 3 against the fix and confirm it returns a non-zero number | 8.2, 4.5 | The actual payoff moment — verify it before the recording, not during it |
+| 8.1 | Move the `span.SetAttributes` block in `src/checkout/main.go` to before `chargeCard` is called (DEMO.md Act 3) | none, can happen any time | The four-line fix the whole Act 3 narrative is built on **Done.** `demo.order.id`, `demo.shipping.amount`, `demo.order.amount` and `demo.order.items.count` are set right after `total`, before `chargeCard`. Only `demo.shipping.tracking.id` stays after `shipOrder` |
+| 8.2 | Rebuild the `checkout` image, `kind load docker-image` it into the cluster, roll the Deployment | 8.1, D3 | This is the one service D3 always builds locally, since it diverges from upstream the moment 8.1 lands **Done.** Built from the repo root, `kind load`ed, `imageOverride` in `chart/otel-demo/values.yaml`, rolled out with `helm upgrade`. Go is not installed on this machine, so it compiled inside `docker build` |
+| 8.3 | Re-run DEMO.md's Query 3 against the fix and confirm it returns a non-zero number | 8.2, 4.5 | The actual payoff moment — verify it before the recording, not during it **Done, with real numbers.** With `paymentFailure` at 25%: Query 3 returned 0 on the upstream image, then `lost_orders=1, revenue_at_risk=110.94` after the rollout; Query 5 showed the same 110.94 on the `gold` tier. Failures are sparse with browser traffic off, so rehearsal needs a longer window or a higher flag value |
 
 ---
 

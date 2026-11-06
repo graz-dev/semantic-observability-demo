@@ -400,24 +400,31 @@ And show it published: <http://localhost:8080/telemetry> — the whole vocabular
 as a browsable site, generated from the YAML by Weaver, so a new engineer can
 discover it without asking anyone.
 
-**Then make it a mesh.** Today the registry is one flat pile. Give each domain
-an explicit owner and explicit dependencies, so that:
+**Then make it a mesh.** Every attribute names an owning domain
+(`annotations.owner`) and a domain can declare what it depends on
+(`annotations.depends_on`). Both are visible on the published pages, and the
+policies in Act 4 enforce them:
 
 - the **user** domain owns `demo.user_context.loyalty_level` and is accountable
   for it,
-- the **order** domain *depends on* it, because order-value analysis is
+- the **order** domain *depends on* it: [`order.yaml`](telemetry-schema/attributes/order.yaml)
+  lists it under `demo.order.amount`, because order-value analysis is
   meaningless without customer tier,
 - payment must not invent its own user attribute — today it literally does, by
   randomising a loyalty level inside the payment service. That is a domain
   boundary violation, and it is visible in the code at
-  [`charge.js:65`](src/payment/charge.js#L65).
+  [`charge.js:65`](src/payment/charge.js#L65). The policies do not catch this
+  one yet; it is a point to make out loud, and where the loyalty-tier origin
+  question in [section 8](#8-open-questions) comes from.
 
-**Then fix Act 2's empty result, driven by the contract.** The order domain
-declares that `demo.order.amount` is `required` on every checkout attempt —
-success or failure. Move the `span.SetAttributes` block in
+**Then fix Act 2's empty result, driven by the contract.**
+[`services/checkout.yaml`](telemetry-schema/services/checkout.yaml) declares
+that `demo.order.amount` is `required` on every checkout attempt — success or
+failure. Move the `span.SetAttributes` block in
 [`src/checkout/main.go`](src/checkout/main.go) to just after `total` is
-computed and before `chargeCard` is called. Rebuild one service, re-run Query 3,
-and the number appears.
+computed and before `chargeCard` is called (only the shipping tracking id has
+to stay after the shipment). Rebuild one service, re-run Query 3, and the
+number appears.
 
 The point to make: the code change is four lines. The reason anyone knew to make
 it is the contract.
@@ -429,25 +436,45 @@ deliver here. The demo beats are:
 
 1. **`weaver registry check`** — already wired into CI at
    [`checks.yml:113`](.github/workflows/checks.yml#L113). Show it passing.
-2. **A Rego policy** — add a house rule ("every demo attribute must use the
-   `demo.` prefix, never `app.`; every attribute must name an owning domain").
-   Open a PR that adds `app.customer.tier`, and show CI reject it. This is how a
-   vocabulary stays *one* vocabulary as an organisation grows.
+2. **A Rego policy** — the house rules live in
+   [`policies/attributes.rego`](telemetry-schema/policies/attributes.rego): every
+   demo attribute must use the `demo.` prefix, never `app.`; every attribute
+   must name an owning domain that matches its file, and `depends_on` must point
+   at something that exists. Show a PR that adds `app.customer.tier` being
+   rejected: [`demo/act4-policy.sh`](demo/act4-policy.sh) runs the same check as
+   the CI job with that change applied (`demo/act4-policy.sh clean` shows the
+   passing run). This is how a vocabulary stays *one* vocabulary as an
+   organisation grows.
 3. **`weaver registry live-check`** — the strongest beat. Fork a copy of the
    live OTLP stream into Weaver and have it grade the real telemetry against the
    registry, in real time. Introduce a service emitting
    `demo.user_context.loyaltyLevel` (camelCase typo) and watch it get flagged
    within seconds — something no amount of code review would have caught.
+   [`demo/act4-live-check.sh`](demo/act4-live-check.sh) does exactly that and
+   prints the findings (`missing_attribute` and `invalid_format`, about three
+   seconds later).
 4. **Close the loop.** Run live-check with `--emit-otlp-logs` pointed back at
    the collector, so schema violations land in ClickHouse as telemetry:
 
    ```sql
-   SELECT ServiceName, Body, count()
+   SELECT
+       LogAttributes['weaver.finding.id'] AS finding,
+       LogAttributes['weaver.finding.context.attribute_key'] AS attribute_key,
+       LogAttributes['weaver.finding.resource.attribute.service.name'] AS service,
+       count() AS findings
    FROM otel_logs
-   WHERE ScopeName LIKE '%live_check%'
-   GROUP BY ServiceName, Body
-   ORDER BY count() DESC;
+   WHERE ScopeName = 'weaver.live_check'
+     AND LogAttributes['weaver.finding.level'] = 'violation'
+     AND Timestamp > now() - INTERVAL 15 MINUTE
+   GROUP BY finding, attribute_key, service
+   ORDER BY findings DESC
+   LIMIT 25;
    ```
+
+   Most of what shows up here is upstream semantic convention attributes the
+   demo apps still emit under their deprecated names (`http.status_code`,
+   `rpc.system`), not our own `demo.*` vocabulary. Filter on
+   `attribute_key LIKE 'demo.%'` to see only the latter.
 
    Governance becomes a queryable dashboard: *which teams are drifting from the
    standard, and by how much*.
