@@ -20,5 +20,6 @@ attribute_groups:
       - ref: demo.order.id
       - ref: demo.shipping.amount
       - ref: demo.order.amount
+        requirement_level: required
       - ref: demo.order.items.count
       - ref: demo.cart.items.count

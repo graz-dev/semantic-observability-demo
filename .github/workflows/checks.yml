@@ -128,7 +128,7 @@ jobs:
           docker run --rm \
             --mount "type=bind,source=${GITHUB_WORKSPACE_PATH}/telemetry-schema,target=/home/weaver/source,readonly" \
             "${WEAVER_IMAGE}" \
-            registry check -r source
+            registry check -r source -p source/policies
 
   build-test:
     name: build-test
