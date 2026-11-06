@@ -21,7 +21,7 @@ FROM (
     WHERE ServiceName IN ('checkout', 'payment')
       AND Timestamp > now() - INTERVAL 15 MINUTE
     GROUP BY TraceId
-    HAVING checkout_errors > 0
+    HAVING checkout_errors > 0 AND tier != ''
 )
 GROUP BY tier
 ORDER BY revenue_at_risk DESC;

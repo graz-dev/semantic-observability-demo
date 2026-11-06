@@ -13,6 +13,21 @@
 [![OpenSSF Scorecard for opentelemetry-demo](https://api.scorecard.dev/projects/github.com/open-telemetry/opentelemetry-demo/badge)](https://scorecard.dev/viewer/?uri=github.com/open-telemetry/opentelemetry-demo)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/9247/badge)](https://www.bestpractices.dev/en/projects/9247)
 
+## Semantic observability demo (this fork)
+
+This fork turns the demo into a talk and workshop about semantic observability:
+one ClickHouse engine for all telemetry, a schema that gives it meaning, and
+Weaver to keep that schema true. It runs on a local `kind` cluster:
+
+```bash
+make demo-up      # about 10 to 20 minutes the first time
+make demo-down
+```
+
+Start with [demo/README.md](./demo/README.md) for the exercises and
+[DEMO.md](./DEMO.md) for the talk script. The sections below are the upstream
+README and still describe the upstream deployment options.
+
 ## Welcome to the OpenTelemetry Astronomy Shop Demo
 
 This repository contains the OpenTelemetry Astronomy Shop, a microservice-based

@@ -288,7 +288,7 @@ owners, dependencies and requirement levels.
 |---|---|---|---|
 | 6.1 | `Deployment` + `Service` running `otel/weaver:v0.25.1` with `registry live-check --input-source otlp` | 4.2 | **Done, verified.** Went with "bake it into a small image at build time" (the option this task's note left open) — `src/weaver-live-check/Dockerfile` mirrors `src/telemetry-docs/Dockerfile`'s exact pattern (`COPY telemetry-schema /telemetry-schema`), so it's a fifth D3-style local build, no ConfigMap/volume plumbing needed. `chart/otel-demo-mesh/templates/weaver-live-check.yaml` — 100% our own template, no upstream dependency, matching this chart's nature. **Real bug found and fixed:** the default `--inactivity-timeout` is 10s — without real traffic yet (4.3 wasn't wired at first boot), the pod crash-looped every 10s. Fixed with an explicit `--inactivity-timeout 604800` so it behaves like every other long-running Deployment regardless of traffic gaps |
 | 6.2 | `--emit-otlp-logs` wired back to the Collector, so findings land in ClickHouse as queryable telemetry | 6.1, 4.2 | **Verified end to end on 2026-11-06** (see the end of this row). History: one more real bug found and fixed along the way. First attempt failed outright: `TonicLogsClient export failed: invalid URI` — weaver's OTLP logs exporter rejects a bare `host:port`, needs an explicit scheme (`http://...`). Fixed, and the error is gone. **Not yet independently confirmed:** that findings are actually landing as rows in `otel_logs`. Sent a deliberate `demo.user_context.loyaltyLevel` (camelCase) violation directly at weaver and confirmed *weaver itself* flagged it correctly, but could not confirm the row on the ClickHouse side — the machine was under heavy load during this check (~580% CPU on one node) and `clickhouse-client` queries were taking minutes each, making this specific link impractical to nail down in that session. Re-check once the machine has headroom, ideally with `kubectl port-forward` + a local client instead of `kubectl exec` to cut latency. **Resolved 2026-11-06:** with `port-forward` + HTTP, `otel.otel_logs` holds ~69k rows with `ScopeName='weaver.live_check'` a few minutes after the mesh came up: `improvement` 37k, `violation` 29k, `information` 2.5k. Violation breakdown by `weaver.finding.id`: `deprecated` 17k, `missing_attribute` 11k, `type_mismatch` 869, `invalid_format` 405, `illegal_namespace` 32. Almost all violations come from upstream semconv attributes the upstream demo apps still emit (`http.status_code`, `rpc.system`, `http.method`, ...), not from our `demo.*` registry. The one `demo.*` violation is `demo.ad.context_keys.count` (`illegal_namespace`), a real finding to look at before Act 4 |
-| 6.3 | Throughput check under full load-generator traffic | 6.1 | Incidentally exercised, not formally measured: weaver has been continuously processing real traffic (app spans, not just the synthetic test) without crashing or falling behind visibly. A real number (findings/sec sustained, memory growth over time) is still worth capturing before the recording |
+| 6.3 | Throughput check under full load-generator traffic | 6.1 | Incidentally exercised, not formally measured: weaver has been continuously processing real traffic (app spans, not just the synthetic test) without crashing or falling behind visibly. A real number (findings/sec sustained, memory growth over time) is still worth capturing before the recording **Measured on 2026-11-06, with browser traffic on:** ~100-115 spans/s reach Weaver and it produces ~1,700-2,000 findings/s, about 17 per span (47% `violation`, 49% `improvement`, 5% `information`). Memory is flat at 30-55 MiB, 0 restarts, no `Rejecting data` in the collector, 0 export errors. At the old `500m` CPU limit the container was throttled in 79% of periods; at `1` CPU it is 12%, and the findings/spans ratio did not change, so it was not dropping data. The chart now requests `250m` and limits to `1`. Storage: ~61 bytes per finding row on disk, which at this rate is a few GB per day for `otel_logs` even with the 24h TTL, fine for a talk but worth knowing before leaving it running |
 
 ### Cold start, as actually run on 2026-11-06
 
@@ -346,9 +346,9 @@ Orchestrator-independent — can proceed in parallel with everything above.
 
 | Task | Output | Depends on | Notes |
 |---|---|---|---|
-| 10.1 | `demo/README.md` — the five self-paced exercises with checkpoints from DEMO.md §7 | 3.1–8.3 (needs the real thing to exist first) | |
-| 10.2 | `demo/queries/*.sql` | see 3.5 | |
-| 10.3 | A single top-level `README`/`Makefile` entry point for "get the whole thing running" — even if it's a thin wrapper around `kind create cluster` + `helm install`, attendees need one documented starting command | 2.1, 3.1 | Resolves DEMO.md's open question about how much raw `kubectl`/`helm` the audience should see day-to-day vs. during the talk itself |
+| 10.1 | `demo/README.md` — the five self-paced exercises with checkpoints from DEMO.md §7 | 3.1–8.3 (needs the real thing to exist first) | **Done.** `demo/README.md`, five exercises with checkpoints. Exercise 3 starts from `demo/rehearsal/checkout-before-fix.patch`, which reverts the fix so the loop (empty answer, fix, `make demo-checkout`, number appears) can be replayed on a repo that already contains it |
+| 10.2 | `demo/queries/*.sql` | see 3.5 | **Done**, same as 3.5 |
+| 10.3 | A single top-level `README`/`Makefile` entry point for "get the whole thing running" — even if it's a thin wrapper around `kind create cluster` + `helm install`, attendees need one documented starting command | 2.1, 3.1 | Resolves DEMO.md's open question about how much raw `kubectl`/`helm` the audience should see day-to-day vs. during the talk itself **Done.** `make demo-up` / `make demo-down` (cluster, operator pinned to 0.27.3, the five local images, mesh chart, then the app chart, in the order the cold-start note requires), `make demo-checkout` for the Act 3 loop, and a short section at the top of `README.md`. 5m12s from no cluster with the images already built locally and cached |
 
 ---
 
@@ -369,20 +369,37 @@ not ship long-term as-is:
 
 The final gate before the recording, once everything above lands:
 
-- [ ] Full cold start: `kind create cluster` → `helm install` → app reachable
-      at `:8080`, timed end to end
-- [ ] Inject `paymentFailure`, confirm the swamp investigation in DEMO.md Act
-      1 plays out as written
-- [ ] Confirm Act 2's queries 1–3 return exactly what DEMO.md says, including
-      Query 3's empty result
-- [ ] Confirm Act 3's fix flips Query 3 to non-zero without redeploying
-      anything else
-- [ ] Confirm Act 4's Rego rejection and live-check misspelling detection both
-      fire within a few seconds, not minutes
+- [x] Full cold start: `kind create cluster` → `helm install` → app reachable
+      at `:8080`, timed end to end. `make demo-down` + `make demo-up`: 5m12s,
+      25 app pods and 2 mesh pods Running, all six routes 200, `shipping`
+      restarted 3 times waiting for flagd (known). Docker image layers were
+      cached; an attendee's first pull will take longer
+- [x] Inject `paymentFailure`, confirm the swamp investigation in DEMO.md Act
+      1 plays out as written. Injected at 25%; payment error rate 21.6%. The
+      Grafana/Jaeger/OpenSearch walk-through itself was not re-clicked, only the
+      data behind it
+- [x] Confirm Act 2's queries 1–3 return exactly what DEMO.md says, including
+      Query 3's empty result. Query 1 puts payment first, Query 2 shows every
+      failure in `gold`, Query 3 returns 0 (all with the corrected SQL in
+      `demo/queries/`)
+- [x] Confirm Act 3's fix flips Query 3 to non-zero without redeploying
+      anything else. Only checkout was rebuilt (`make demo-checkout`, 3 to 26 s);
+      the number appeared about 34 s after the rollout (923.57 at risk) and the
+      payoff query attributes it to `gold`. The 15-minute window still contains
+      pre-fix failures, so the first payoff shows more failed orders than amount
+- [x] Confirm Act 4's Rego rejection and live-check misspelling detection both
+      fire within a few seconds, not minutes. Policy: 1 to 3 s; live-check
+      script: 6 s end to end, including the port-forwards
 - [ ] Time the whole script; confirm it fits the actual talk slot, not just
-      the ~20-minute estimate in DEMO.md
+      the ~20-minute estimate in DEMO.md. Open: needs a person to run it with
+      narration. The machine-side waits are known now: ~2 minutes of failures
+      to accumulate in Act 1, ~35 s after the checkout rollout in Act 3, a few
+      seconds for each Act 4 beat
 - [ ] One full `kind delete cluster` → cold start cycle on a clean machine,
-      simulating an attendee, with no state left over from rehearsal
+      simulating an attendee, with no state left over from rehearsal. Open: the
+      cycle above ran on the development machine with Docker's layer cache
+      warm, so it does not measure the first image pull or the 2.3 GB
+      load-generator build
 
 ---
 

@@ -189,17 +189,11 @@ opentelemetry-demo:
           value: "9"
         - name: LOCUST_BROWSER_USER_WEIGHT
           value: "1"
-        # Off for iterative dev/wiring work: headless Chromium was a real,
-        # measured chunk of CPU on an already CPU-saturated laptop (confirmed
-        # via `docker top` — chrome processes at ~27%+18% on one node,
-        # alongside clickhouse-server as the single largest consumer at the
-        # time). Docker Desktop already passes through the host's full 10
-        # cores (no artificial cap to raise), so cutting demand was the only
-        # real lever. Flip back to "true" before the actual recording/
-        # rehearsal, where full-fidelity traffic (including real browser
-        # sessions) matters.
+        # Real headless Chromium sessions: the heaviest part of the load
+        # generator. Set to "false" on a laptop that cannot keep up (PLAN.md
+        # §12 has the measured cost).
         - name: LOCUST_BROWSER_TRAFFIC_ENABLED
-          value: "false"
+          value: "true"
         - name: FLAGD_OFREP_PORT
           value: "8016"
       # Exposes the Locust web UI as a Service so frontend-proxy's /loadgen/
