@@ -1,0 +1,15 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Exercise 5: the change a well meaning engineer would open as a PR. It is
+# not part of the registry; demo/policy-check.sh overlays it on top of
+# telemetry-schema/attributes/ to show the Rego policy rejecting it.
+file_format: definition/2
+attributes:
+  - key: app.customer.tier
+    type: string
+    brief: Customer tier
+    stability: development
+    annotations:
+      owner: customer
+    examples: ["gold", "silver"]

@@ -3,8 +3,6 @@
 
 # Our overrides on top of the official opentelemetry-demo chart's own
 # values.yaml, nested under the dependency name per Helm subchart convention.
-# See PLAN.md §3 for what's still missing here (collector config, ClickHouse
-# wiring, checkout/telemetry-docs/frontend-proxy image overrides).
 opentelemetry-demo:
   components:
     # The official chart enables every component by default, including ones
@@ -57,17 +55,79 @@ opentelemetry-demo:
       envOverrides:
         - name: KAFKA_ADDR
           value: ""
+      # Always a local build (exercise 4 fix): `docker build -f
+      # src/checkout/Dockerfile -t otel-demo-fork/checkout:local .` from the
+      # repo root, then `kind load docker-image otel-demo-fork/checkout:local
+      # --name otel-demo`.
+      imageOverride:
+        repository: otel-demo-fork/checkout
+        tag: local
+        pullPolicy: Never
+      resources:
+        limits:
+          memory: 128Mi
 
-    # PLAN.md D8 / task 2.3: no Ingress, no Gateway API. frontend-proxy
+    # Memory-limit bumps (see the flagd/product-catalog note below). The
+    # upstream chart caps many components below their own executables'
+    # resident size. With requests == limits and swap off on the nodes, the
+    # kernel's only reclaimable memory under that cap is the executable's own
+    # file-backed pages — so it evicts and immediately major-faults them back
+    # from disk in a tight loop (confirmed live for flagd/product-catalog/ad:
+    # rchar ~0 but read_bytes multi-GB/s, workingset_refault_file in the
+    # hundreds of millions, memory.events `max` in the millions, driving
+    # host iowait to ~50%). Raised to give real headroom above the working
+    # set; the nodes have ample RAM. ad is a JVM (heap + metaspace + code
+    # cache must stay resident); frontend-proxy is Envoy (~100Mi binary).
+    flagd:
+      resources:
+        limits:
+          memory: 192Mi
+    product-catalog:
+      resources:
+        limits:
+          memory: 128Mi
+    ad:
+      resources:
+        limits:
+          memory: 600Mi
+    currency:
+      resources:
+        limits:
+          memory: 128Mi
+    shipping:
+      resources:
+        limits:
+          memory: 128Mi
+    valkey-cart:
+      resources:
+        limits:
+          memory: 128Mi
+    quote:
+      resources:
+        limits:
+          memory: 128Mi
+    image-provider:
+      resources:
+        limits:
+          memory: 128Mi
+    opamp-server:
+      resources:
+        limits:
+          memory: 128Mi
+
+    # No Ingress, no Gateway API. frontend-proxy
     # (Envoy) already does all the path-based routing this demo needs, so it
     # is exposed directly as a NodePort matching kind/cluster.yaml's
     # extraPortMappings (host :8080 -> container :30080).
     frontend-proxy:
+      resources:
+        limits:
+          memory: 192Mi
       service:
         type: NodePort
         port: 8080
         nodePort: 30080
-      # PLAN.md D3: envoy.tmpl.yaml diverged from upstream in the scaffolding
+      # envoy.tmpl.yaml diverged from upstream in the scaffolding
       # cleanup (chatbot/profiles routes removed), so this is always a local
       # build: `docker build -f src/frontend-proxy/Dockerfile -t
       # otel-demo-fork/frontend-proxy:local .` from repo root, then
@@ -93,8 +153,12 @@ opentelemetry-demo:
           value: load-generator
         - name: LOCUST_WEB_PORT
           value: "8089"
+        - name: CLICKHOUSE_HOST
+          value: clickhouse-clickhouse.otel-demo-mesh.svc.cluster.local
+        - name: CLICKHOUSE_HTTP_PORT
+          value: "8123"
 
-    # PLAN.md D3: this fork replaced upstream's k6/JavaScript load generator
+    # This fork replaced upstream's k6/JavaScript load generator
     # with Locust/Python (real source-level divergence, see src/load-generator/
     # locustfile.py) — always a local build:
     #   docker build -f src/load-generator/Dockerfile -t otel-demo-fork/load-generator:local .
@@ -127,17 +191,10 @@ opentelemetry-demo:
           value: "9"
         - name: LOCUST_BROWSER_USER_WEIGHT
           value: "1"
-        # Off for iterative dev/wiring work: headless Chromium was a real,
-        # measured chunk of CPU on an already CPU-saturated laptop (confirmed
-        # via `docker top` — chrome processes at ~27%+18% on one node,
-        # alongside clickhouse-server as the single largest consumer at the
-        # time). Docker Desktop already passes through the host's full 10
-        # cores (no artificial cap to raise), so cutting demand was the only
-        # real lever. Flip back to "true" before the actual recording/
-        # rehearsal, where full-fidelity traffic (including real browser
-        # sessions) matters.
+        # Real headless Chromium sessions: the heaviest part of the load
+        # generator. Set to "false" on a laptop that cannot keep up.
         - name: LOCUST_BROWSER_TRAFFIC_ENABLED
-          value: "false"
+          value: "true"
         - name: FLAGD_OFREP_PORT
           value: "8016"
       # Exposes the Locust web UI as a Service so frontend-proxy's /loadgen/
@@ -153,18 +210,21 @@ opentelemetry-demo:
         limits:
           memory: 1500Mi
 
-    # TODO (task 8.2): checkout imageOverride once the Act 3 fix (task 8.1)
-    # lands and the image is built + `kind load docker-image`'d.
+    # Always a local build, since it bakes in our own telemetry-schema/:
+    # `docker build -f src/telemetry-docs/Dockerfile -t
+    # otel-demo-fork/telemetry-docs:local .` from the repo root, then
+    # `kind load docker-image otel-demo-fork/telemetry-docs:local --name
+    # otel-demo`.
+    telemetry-docs:
+      imageOverride:
+        repository: otel-demo-fork/telemetry-docs
+        tag: local
+        pullPolicy: Never
 
-    # TODO (task 3.2/6.1): telemetry-docs imageOverride — this one always
-    # needs a local build, since it bakes in our own telemetry-schema/.
-
-  # PLAN.md D7 (revised): the chart's own default collector config is not a
-  # stub, it's a real K8s-native config (see PLAN.md §4 for how this was
-  # confirmed by reading the live rendered ConfigMap, not guessed). We only
-  # add what's genuinely missing: our PII redaction processor, and a
-  # ClickHouse exporter wired into every pipeline alongside the existing
-  # swamp backends (D4 — both run concurrently, nothing is replaced).
+  # The chart's own default collector config is a real K8s-native config, not
+  # a stub. We only add what's genuinely missing: our PII redaction processor,
+  # and a ClickHouse exporter wired into every pipeline alongside the existing
+  # swamp backends (both run concurrently, nothing is replaced).
   #
   # IMPORTANT: Helm deep-merges maps but replaces lists wholesale. Every
   # `processors`/`exporters` list below is the chart's own original list
@@ -174,7 +234,7 @@ opentelemetry-demo:
   # additions appended. `receivers` is untouched everywhere, so it inherits
   # from the chart's default unmodified.
   opentelemetry-collector:
-    # Trims collector overhead that produces data no Act in DEMO.md ever
+    # Trims collector overhead that produces data no exercise in demo/README.md ever
     # queries: host-level CPU/mem/disk scraping, kubelet stats API scraping,
     # and cluster-wide k8s object watching. This demo's whole argument runs
     # on app-level `demo.*` attributes and business signals, not K8s
@@ -204,7 +264,7 @@ opentelemetry-demo:
                 - replace_pattern(attributes["demo.payment.card_number"], "^\\d{4}-\\d{4}-\\d{4}-", "****-****-****-") where attributes["demo.payment.card_number"] != nil
       exporters:
         # otel-demo-mesh's ClickHouseInstallation Service, confirmed reachable
-        # cross-namespace before this was written (PLAN.md task 5.3). demo/demo
+        # cross-namespace. demo/demo
         # is the workshop-default credential set in chart/otel-demo-mesh/values.yaml
         # — fine for a local kind cluster with no external exposure, not meant
         # to be a real secret.
@@ -213,14 +273,16 @@ opentelemetry-demo:
           username: demo
           password: demo
           database: otel
-          create_schema: true
+          # Schema is created by ClickHouse's init script in otel-demo-mesh
+          # (templates/clickhouse-init-scripts.yaml), not by the collector.
+          create_schema: false
           ttl: 24h
           timeout: 10s
           sending_queue:
             queue_size: 1000
         # Task 4.3: forks a copy of traces to Weaver live-check (chart/
         # otel-demo-mesh), which grades them against telemetry-schema/ in
-        # real time (DEMO.md Act 4) and streams findings back as OTLP logs
+        # real time (exercise 5 in demo/README.md) and streams findings back as OTLP logs
         # — those ride the *existing* logs pipeline below straight into
         # ClickHouse, no separate wiring needed for that leg.
         otlp/weaver:
@@ -241,3 +303,38 @@ opentelemetry-demo:
             exporters: [otlp_http/prometheus, debug, clickhouse]
           logs:
             exporters: [opensearch, debug, clickhouse]
+
+  grafana:
+    # Replaces upstream's list rather than merging, so its OpenSearch plugin
+    # is restated here.
+    plugins:
+      - grafana-opensearch-datasource
+      - grafana-clickhouse-datasource
+    # Mounted next to upstream's sidecar-provisioned datasources, so the
+    # file name must not collide with theirs (default/jaeger/opensearch).
+    datasources:
+      clickhouse.yaml:
+        apiVersion: 1
+        datasources:
+          - name: ClickHouse
+            uid: clickhouse
+            type: grafana-clickhouse-datasource
+            jsonData:
+              host: clickhouse-clickhouse.otel-demo-mesh.svc.cluster.local
+              port: 9000
+              protocol: native
+              username: demo
+              defaultDatabase: otel
+              traces:
+                defaultDatabase: otel
+                defaultTable: otel_traces
+                otelEnabled: true
+                otelVersion: latest
+                durationUnit: nanoseconds
+              logs:
+                defaultDatabase: otel
+                defaultTable: otel_logs
+                otelEnabled: true
+                otelVersion: latest
+            secureJsonData:
+              password: demo

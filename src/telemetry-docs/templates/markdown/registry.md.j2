@@ -36,6 +36,12 @@
 |----------|-------|
 | **Type** | {{ attrs.type(attribute) }} |
 | **Stability** | {{ attribute.stability | default('stable') }} |
+{%- if attribute.annotations and attribute.annotations.owner %}
+| **Owner** | `{{ attribute.annotations.owner }}` |
+{%- endif %}
+{%- if attribute.annotations and attribute.annotations.depends_on %}
+| **Depends on** | {% for d in attribute.annotations.depends_on %}{% if not loop.first %}, {% endif %}`{{ d }}`{% endfor %} |
+{%- endif %}
 {%- if attribute.note %}
 | **Note** | {{ attribute.note | trim }} |
 {%- endif %}

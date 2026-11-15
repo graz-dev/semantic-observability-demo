@@ -142,6 +142,49 @@ check-clean-work-tree:
 	  exit 1; \
 	fi
 
-# Orchestration targets (build, start, stop, redeploy, tests) run entirely on
-# Kubernetes now — see PLAN.md for the Helm/kind setup that replaces the old
-# docker-compose targets. They land here once that work is implemented.
+# The demo runs entirely on Kubernetes. The targets below drive a local kind
+# cluster, see demo/README.md.
+
+# Semantic observability demo on a local kind cluster (demo/README.md).
+KIND_CLUSTER ?= otel-demo
+CLICKHOUSE_OPERATOR_VERSION ?= 0.27.3
+CLICKHOUSE_OPERATOR_URL = https://raw.githubusercontent.com/Altinity/clickhouse-operator/$(CLICKHOUSE_OPERATOR_VERSION)/deploy/operator/clickhouse-operator-install-bundle.yaml
+# Images this fork builds itself, as src/<name>/Dockerfile (chart/otel-demo/values.yaml imageOverride).
+DEMO_IMAGES := frontend-proxy load-generator checkout telemetry-docs weaver-live-check
+
+# The operator and the mesh chart go before the app: until ClickHouse exists the
+# collector queues data and its memory_limiter starts refusing it.
+.PHONY: demo-up
+demo-up: demo-cluster demo-operator demo-images
+	helm upgrade --install otel-demo-mesh chart/otel-demo-mesh -n otel-demo-mesh --create-namespace
+	kubectl -n otel-demo-mesh wait --for=jsonpath='{.status.status}'=Completed chi/clickhouse --timeout=10m
+	helm upgrade --install otel-demo chart/otel-demo -n otel-demo --create-namespace --wait --timeout 20m
+	@echo "Ready: http://localhost:8080 (shop), /grafana/, /jaeger/ui/, /feature/, /loadgen/, /telemetry/"
+
+.PHONY: demo-down
+demo-down:
+	kind delete cluster --name $(KIND_CLUSTER)
+
+.PHONY: demo-cluster
+demo-cluster:
+	kind get clusters | grep -qx $(KIND_CLUSTER) || kind create cluster --config kind/cluster.yaml
+
+.PHONY: demo-operator
+demo-operator:
+	kubectl apply -f $(CLICKHOUSE_OPERATOR_URL)
+	kubectl -n kube-system rollout status deploy/clickhouse-operator --timeout=5m
+
+.PHONY: demo-images
+demo-images:
+	@for image in $(DEMO_IMAGES); do \
+	  $(DOCKER_CMD) build -f src/$$image/Dockerfile -t otel-demo-fork/$$image:local . && \
+	  kind load docker-image otel-demo-fork/$$image:local --name $(KIND_CLUSTER) || exit 1; \
+	done
+
+# Rebuild checkout and roll it out, the loop of exercises 3 and 4.
+.PHONY: demo-checkout
+demo-checkout:
+	$(DOCKER_CMD) build -f src/checkout/Dockerfile -t otel-demo-fork/checkout:local .
+	kind load docker-image otel-demo-fork/checkout:local --name $(KIND_CLUSTER)
+	kubectl -n otel-demo rollout restart deploy/checkout
+	kubectl -n otel-demo rollout status deploy/checkout --timeout=3m

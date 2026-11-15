@@ -1,10 +1,10 @@
 # Copyright The OpenTelemetry Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# PLAN.md §6. Grades a live fork of the demo's real OTLP traffic against
+# Grades a live fork of the demo's real OTLP traffic against
 # telemetry-schema/ (baked into the image, see src/weaver-live-check/
 # Dockerfile) and streams findings back to the Collector as OTLP logs, which
-# already flow into ClickHouse via the `clickhouse` exporter (task 4.2) —
+# already flow into ClickHouse via the `clickhouse` exporter —
 # so schema drift becomes a queryable table, not something you have to
 # watch a log tail for.
 apiVersion: apps/v1
@@ -33,6 +33,13 @@ spec:
             - live-check
             - -r
             - /telemetry-schema
+            # Grade live telemetry against the full semconv vocabulary, not
+            # just the attributes this demo's own registry references. The
+            # registry declares upstream semconv (manifest.yaml dependencies)
+            # but by default live-check excludes unreferenced dependency
+            # attributes, so every standard attribute the apps emit
+            # (server.address, http.*, rpc.*) is otherwise flagged as missing.
+            - --include-unreferenced
             - --input-source
             - otlp
             - --otlp-grpc-address
@@ -40,7 +47,7 @@ spec:
             - --otlp-grpc-port
             - "4317"
             # A long-running Deployment must never exit on a finding — that's
-            # the whole point (DEMO.md Act 4). --fail-on is for one-shot CI
+            # the whole point (exercise 5 in demo/README.md). --fail-on is for one-shot CI
             # use, which this isn't.
             - --fail-on
             - none

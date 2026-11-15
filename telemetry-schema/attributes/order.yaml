@@ -17,7 +17,8 @@ attributes:
     stability: stable
     annotations:
       owner: order
-    note: The total monetary amount of the order
+      depends_on: [demo.user_context.loyalty_level]
+    note: The total monetary amount of the order, recorded on every checkout attempt, including failed ones
     examples: [99.99, 150.50]
   - key: demo.order.items.count
     type: int

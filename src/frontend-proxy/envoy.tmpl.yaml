@@ -81,6 +81,13 @@ static_resources:
                               - upgrade_type: websocket
                         - match: { prefix: "/" }  # Default/catch-all route - keep last since prefix:"/" matches everything
                           route: { cluster: frontend }
+                    - name: clickhouse
+                      domains:
+                        - "clickhouse.localhost"
+                        - "clickhouse.localhost:*"
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: clickhouse, timeout: 120s }
                 http_filters:
                   - name: envoy.filters.http.fault
                     typed_config:
@@ -288,6 +295,19 @@ static_resources:
                     socket_address:
                       address: ${OPAMP_SERVER_HOST}
                       port_value: ${OPAMP_SERVER_UI_PORT}
+    - name: clickhouse
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      typed_dns_resolver_config: *dns_resolver
+      load_assignment:
+        cluster_name: clickhouse
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: ${CLICKHOUSE_HOST}
+                      port_value: ${CLICKHOUSE_HTTP_PORT}
     - name: telemetry-docs
       type: STRICT_DNS
       lb_policy: ROUND_ROBIN
