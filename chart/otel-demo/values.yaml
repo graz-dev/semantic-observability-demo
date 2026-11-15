@@ -3,8 +3,6 @@
 
 # Our overrides on top of the official opentelemetry-demo chart's own
 # values.yaml, nested under the dependency name per Helm subchart convention.
-# See PLAN.md §3 for what's still missing here (collector config, ClickHouse
-# wiring, checkout/telemetry-docs/frontend-proxy image overrides).
 opentelemetry-demo:
   components:
     # The official chart enables every component by default, including ones
@@ -57,7 +55,7 @@ opentelemetry-demo:
       envOverrides:
         - name: KAFKA_ADDR
           value: ""
-      # Always a local build (Act 3 fix): `docker build -f
+      # Always a local build (exercise 4 fix): `docker build -f
       # src/checkout/Dockerfile -t otel-demo-fork/checkout:local .` from the
       # repo root, then `kind load docker-image otel-demo-fork/checkout:local
       # --name otel-demo`.
@@ -117,7 +115,7 @@ opentelemetry-demo:
         limits:
           memory: 128Mi
 
-    # PLAN.md D8 / task 2.3: no Ingress, no Gateway API. frontend-proxy
+    # No Ingress, no Gateway API. frontend-proxy
     # (Envoy) already does all the path-based routing this demo needs, so it
     # is exposed directly as a NodePort matching kind/cluster.yaml's
     # extraPortMappings (host :8080 -> container :30080).
@@ -129,7 +127,7 @@ opentelemetry-demo:
         type: NodePort
         port: 8080
         nodePort: 30080
-      # PLAN.md D3: envoy.tmpl.yaml diverged from upstream in the scaffolding
+      # envoy.tmpl.yaml diverged from upstream in the scaffolding
       # cleanup (chatbot/profiles routes removed), so this is always a local
       # build: `docker build -f src/frontend-proxy/Dockerfile -t
       # otel-demo-fork/frontend-proxy:local .` from repo root, then
@@ -155,8 +153,12 @@ opentelemetry-demo:
           value: load-generator
         - name: LOCUST_WEB_PORT
           value: "8089"
+        - name: CLICKHOUSE_HOST
+          value: clickhouse-clickhouse.otel-demo-mesh.svc.cluster.local
+        - name: CLICKHOUSE_HTTP_PORT
+          value: "8123"
 
-    # PLAN.md D3: this fork replaced upstream's k6/JavaScript load generator
+    # This fork replaced upstream's k6/JavaScript load generator
     # with Locust/Python (real source-level divergence, see src/load-generator/
     # locustfile.py) — always a local build:
     #   docker build -f src/load-generator/Dockerfile -t otel-demo-fork/load-generator:local .
@@ -190,8 +192,7 @@ opentelemetry-demo:
         - name: LOCUST_BROWSER_USER_WEIGHT
           value: "1"
         # Real headless Chromium sessions: the heaviest part of the load
-        # generator. Set to "false" on a laptop that cannot keep up (PLAN.md
-        # §12 has the measured cost).
+        # generator. Set to "false" on a laptop that cannot keep up.
         - name: LOCUST_BROWSER_TRAFFIC_ENABLED
           value: "true"
         - name: FLAGD_OFREP_PORT
@@ -220,12 +221,10 @@ opentelemetry-demo:
         tag: local
         pullPolicy: Never
 
-  # PLAN.md D7 (revised): the chart's own default collector config is not a
-  # stub, it's a real K8s-native config (see PLAN.md §4 for how this was
-  # confirmed by reading the live rendered ConfigMap, not guessed). We only
-  # add what's genuinely missing: our PII redaction processor, and a
-  # ClickHouse exporter wired into every pipeline alongside the existing
-  # swamp backends (D4 — both run concurrently, nothing is replaced).
+  # The chart's own default collector config is a real K8s-native config, not
+  # a stub. We only add what's genuinely missing: our PII redaction processor,
+  # and a ClickHouse exporter wired into every pipeline alongside the existing
+  # swamp backends (both run concurrently, nothing is replaced).
   #
   # IMPORTANT: Helm deep-merges maps but replaces lists wholesale. Every
   # `processors`/`exporters` list below is the chart's own original list
@@ -235,7 +234,7 @@ opentelemetry-demo:
   # additions appended. `receivers` is untouched everywhere, so it inherits
   # from the chart's default unmodified.
   opentelemetry-collector:
-    # Trims collector overhead that produces data no Act in DEMO.md ever
+    # Trims collector overhead that produces data no exercise in demo/README.md ever
     # queries: host-level CPU/mem/disk scraping, kubelet stats API scraping,
     # and cluster-wide k8s object watching. This demo's whole argument runs
     # on app-level `demo.*` attributes and business signals, not K8s
@@ -265,7 +264,7 @@ opentelemetry-demo:
                 - replace_pattern(attributes["demo.payment.card_number"], "^\\d{4}-\\d{4}-\\d{4}-", "****-****-****-") where attributes["demo.payment.card_number"] != nil
       exporters:
         # otel-demo-mesh's ClickHouseInstallation Service, confirmed reachable
-        # cross-namespace before this was written (PLAN.md task 5.3). demo/demo
+        # cross-namespace. demo/demo
         # is the workshop-default credential set in chart/otel-demo-mesh/values.yaml
         # — fine for a local kind cluster with no external exposure, not meant
         # to be a real secret.
@@ -283,7 +282,7 @@ opentelemetry-demo:
             queue_size: 1000
         # Task 4.3: forks a copy of traces to Weaver live-check (chart/
         # otel-demo-mesh), which grades them against telemetry-schema/ in
-        # real time (DEMO.md Act 4) and streams findings back as OTLP logs
+        # real time (exercise 5 in demo/README.md) and streams findings back as OTLP logs
         # — those ride the *existing* logs pipeline below straight into
         # ClickHouse, no separate wiring needed for that leg.
         otlp/weaver:

@@ -1,8 +1,8 @@
 -- Copyright The OpenTelemetry Authors
 -- SPDX-License-Identifier: Apache-2.0
 
--- Act 2, Query 3: the question that cannot be answered yet.
--- Returns 0 before the Act 3 fix: checkout only records demo.order.amount after
+-- Exercise 3: the question that cannot be answered yet.
+-- Returns 0 before the fix of exercise 4: checkout only records demo.order.amount after
 -- the charge succeeds, so failed checkouts never carry it.
 WITH failed AS (
     SELECT DISTINCT TraceId

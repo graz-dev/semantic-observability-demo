@@ -1,7 +1,7 @@
 # Copyright The OpenTelemetry Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# Local cluster for the semantic observability demo (PLAN.md D1/§2.1).
+# Local cluster for the semantic observability demo.
 # 1 control-plane + 2 workers: enough to see pods actually scheduled and
 # spread across nodes, without being heavy on a workshop laptop.
 #
@@ -11,8 +11,9 @@
 # frontend) exactly as it did under docker-compose. Putting an Ingress or a
 # Gateway in front of it would be a redundant second routing layer for zero
 # benefit. Instead, host :8080 maps directly to a NodePort on the
-# `frontend-proxy` Service (pinned to 30080 when that Service is created in
-# §3/§4) — see PLAN.md task 2.3.
+# `frontend-proxy` Service (pinned to 30080 in chart/otel-demo/values.yaml).
+# The mapping is bound to the loopback interface, so the demo is not reachable
+# from the network: ClickHouse is exposed through it with a demo password.
 #
 # (kubernetes/ingress-nginx was retired by the Kubernetes project on
 # 2026-03-31 and is unmaintained; ruled out for that reason too, but it would
@@ -25,6 +26,7 @@ nodes:
     extraPortMappings:
       - containerPort: 30080
         hostPort: 8080
+        listenAddress: 127.0.0.1
         protocol: TCP
   - role: worker
   - role: worker

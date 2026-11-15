@@ -1,7 +1,7 @@
 -- Copyright The OpenTelemetry Authors
 -- SPDX-License-Identifier: Apache-2.0
 
--- Act 4: schema violations as telemetry. Weaver live-check findings land in
+-- Exercise 5: schema violations as telemetry. Weaver live-check findings land in
 -- otel_logs under the weaver.live_check scope.
 SELECT
     LogAttributes['weaver.finding.id'] AS finding,

@@ -1,7 +1,7 @@
 -- Copyright The OpenTelemetry Authors
 -- SPDX-License-Identifier: Apache-2.0
 
--- Act 2, Query 1: the technical view, the one Grafana already gave you.
+-- Exercise 2: the technical view, the one Grafana already gave you.
 -- Same answer as the dashboard, but as SQL it composes.
 -- The exporter stores the span status as 'Error', 'Ok' or 'Unset'.
 SELECT

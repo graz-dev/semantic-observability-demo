@@ -3,14 +3,14 @@
 
 # Values for the Altinity `clickhouse` chart (dependency alias `chi`).
 chi:
-  # The operator is installed cluster-wide into kube-system (PLAN.md §5.1).
+  # The operator is installed cluster-wide into kube-system.
   operator:
     enabled: false
   # Keeps the CHI named `clickhouse`, so the operator's Service stays
   # clickhouse-clickhouse, which the collector's exporter points at.
   fullnameOverride: clickhouse
   clickhouse:
-    # Kept deliberately minimal (PLAN.md task 5.2): single shard, single
+    # Kept deliberately minimal: single shard, single
     # replica, no clustering. This is a talk demo, not a production deployment.
     replicasCount: 1
     shardsCount: 1
@@ -194,7 +194,7 @@ chi:
                 </default>
             </profiles>
         </clickhouse>
-    # 2Gi/1cpu OOMKilled under continuous three-signal ingestion (PLAN.md 5.2).
+    # 2Gi/1cpu OOMKilled under continuous three-signal ingestion.
     resources:
       requests:
         memory: 2Gi
@@ -215,17 +215,16 @@ chi:
       alwaysRun: true
 
 weaver:
-  # Always a local build (PLAN.md D3-equivalent for this component) — it
+  # Always a local build — it
   # bakes in telemetry-schema/, so it can never be an off-the-shelf image.
   # docker build -f src/weaver-live-check/Dockerfile -t otel-demo-fork/weaver-live-check:local .
   # kind load docker-image otel-demo-fork/weaver-live-check:local --name otel-demo
   image: otel-demo-fork/weaver-live-check:local
   pullPolicy: Never
   # otel-collector's Service lives in the otel-demo namespace, not this one —
-  # cross-namespace, same DNS pattern already verified for the clickhouse
-  # exporter (task 5.3). Findings land on the Collector's normal OTLP
-  # receiver and ride the existing logs pipeline (already exports to
-  # ClickHouse, task 4.2) — no additional export wiring needed on that leg.
+  # cross-namespace, same DNS pattern as the clickhouse exporter. Findings land
+  # on the Collector's normal OTLP receiver and ride the existing logs pipeline
+  # (which already exports to ClickHouse) — no additional export wiring needed.
   # Scheme is required: weaver's OTLP logs exporter (tonic-based) rejects a
   # bare host:port with "TonicLogsClient export failed: invalid URI" —
   # confirmed live by sending it a bare address first.

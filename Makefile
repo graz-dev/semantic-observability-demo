@@ -142,9 +142,8 @@ check-clean-work-tree:
 	  exit 1; \
 	fi
 
-# Orchestration targets (build, start, stop, redeploy, tests) run entirely on
-# Kubernetes now — see PLAN.md for the Helm/kind setup that replaces the old
-# docker-compose targets. They land here once that work is implemented.
+# The demo runs entirely on Kubernetes. The targets below drive a local kind
+# cluster, see demo/README.md.
 
 # Semantic observability demo on a local kind cluster (demo/README.md).
 KIND_CLUSTER ?= otel-demo
@@ -154,7 +153,7 @@ CLICKHOUSE_OPERATOR_URL = https://raw.githubusercontent.com/Altinity/clickhouse-
 DEMO_IMAGES := frontend-proxy load-generator checkout telemetry-docs weaver-live-check
 
 # The operator and the mesh chart go before the app: until ClickHouse exists the
-# collector queues data and its memory_limiter starts refusing it (PLAN.md §6).
+# collector queues data and its memory_limiter starts refusing it.
 .PHONY: demo-up
 demo-up: demo-cluster demo-operator demo-images
 	helm upgrade --install otel-demo-mesh chart/otel-demo-mesh -n otel-demo-mesh --create-namespace
@@ -182,7 +181,7 @@ demo-images:
 	  kind load docker-image otel-demo-fork/$$image:local --name $(KIND_CLUSTER) || exit 1; \
 	done
 
-# Rebuild checkout and roll it out, the loop of the Act 3 exercise.
+# Rebuild checkout and roll it out, the loop of exercises 3 and 4.
 .PHONY: demo-checkout
 demo-checkout:
 	$(DOCKER_CMD) build -f src/checkout/Dockerfile -t otel-demo-fork/checkout:local .

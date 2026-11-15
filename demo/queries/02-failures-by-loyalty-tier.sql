@@ -1,7 +1,7 @@
 -- Copyright The OpenTelemetry Authors
 -- SPDX-License-Identifier: Apache-2.0
 
--- Act 2, Query 2: the reveal.
+-- Exercise 2: the reveal.
 -- One GROUP BY on a business attribute turns "5% errors" into "we are only
 -- failing our best customers".
 -- The attribute lives on the span payment creates for the charge, not on the

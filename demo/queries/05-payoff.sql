@@ -1,9 +1,9 @@
 -- Copyright The OpenTelemetry Authors
 -- SPDX-License-Identifier: Apache-2.0
 
--- Act 5: the payoff. One query, no tribal knowledge, a business answer.
+-- Exercise 4: the payoff. One query, no tribal knowledge, a business answer.
 -- The loyalty tier is recorded on payment's span and the order amount on
--- checkout's (after the Act 3 fix, on failures too), so the two are joined on
+-- checkout's (after the fix of exercise 4, on failures too), so the two are joined on
 -- the trace they share.
 SELECT
     tier,

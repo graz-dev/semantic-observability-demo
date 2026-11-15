@@ -2,11 +2,12 @@
 # Copyright The OpenTelemetry Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# Act 4, beat 3: emit one span from a made-up service that misspells
+# Exercise 5: emit one span from a made-up service that misspells
 # demo.user_context.loyalty_level as demo.user_context.loyaltyLevel, through the
 # same Collector the real services use (through the frontend-proxy OTLP/HTTP
 # route on :8080), then read the Weaver live-check finding back from
-# ClickHouse. Needs the cluster from the README to be running.
+# ClickHouse (clickhouse.localhost:8080). Needs the cluster from the README to
+# be running.
 set -euo pipefail
 
 attribute="demo.user_context.loyaltyLevel"
@@ -16,14 +17,9 @@ trace_id="$(openssl rand -hex 16)"
 span_id="$(openssl rand -hex 8)"
 now_ns="$(python3 -c 'import time; print(time.time_ns())')"
 
-kubectl -n otel-demo-mesh port-forward svc/clickhouse-clickhouse 18123:8123 >/dev/null 2>&1 &
-clickhouse_pf=$!
-trap 'kill ${clickhouse_pf} 2>/dev/null || true' EXIT
-until curl -s -o /dev/null http://localhost:18123/ping; do sleep 1; done
-
 curl -sf -X POST http://localhost:8080/otlp-http/v1/traces -H 'Content-Type: application/json' -d @- >/dev/null <<JSON
 {"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"${service}"}}]},
-"scopeSpans":[{"scope":{"name":"act4-rehearsal"},"spans":[{"traceId":"${trace_id}","spanId":"${span_id}",
+"scopeSpans":[{"scope":{"name":"live-check-demo"},"spans":[{"traceId":"${trace_id}","spanId":"${span_id}",
 "name":"charge","kind":1,"startTimeUnixNano":"${now_ns}","endTimeUnixNano":"$((now_ns + 1000000))",
 "attributes":[{"key":"${attribute}","value":{"stringValue":"gold"}}]}]}]}]}
 JSON
@@ -38,7 +34,7 @@ GROUP BY finding, level, attribute_key
 FORMAT PrettyCompactMonoBlock"
 
 for _ in $(seq 1 30); do
-  result="$(curl -s -u demo:demo http://localhost:18123/ --data-binary "${query}")"
+  result="$(curl -s -u demo:demo http://clickhouse.localhost:8080/ --data-binary "${query}")"
   if grep -q "${attribute}" <<<"${result}"; then
     echo "${result}"
     exit 0

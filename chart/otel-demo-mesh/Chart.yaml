@@ -1,9 +1,9 @@
 # Copyright The OpenTelemetry Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# Everything this talk adds on top of the official demo (PLAN.md D6): a local
+# Everything this talk adds on top of the official demo: a local
 # ClickHouse (Altinity's `clickhouse` chart, as a dependency) and Weaver
-# live-check (§6, our own templates).
+# live-check (our own templates).
 apiVersion: v2
 name: otel-demo-mesh
 description: ClickHouse + Weaver live-check — the semantic mesh layer this talk adds
